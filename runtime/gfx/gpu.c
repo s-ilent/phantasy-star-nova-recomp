@@ -22,6 +22,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sched.h>   /* sched_yield: the signal wait below, when nothing has completed */
 #include "hle.h"
 
 static int log_gpu(void) { static int v = -1; if (v < 0) { const char *e = getenv("RECOMP_LOG_GPU"); v = e && *e == '1'; } return v; }
@@ -338,11 +339,25 @@ static void h_open(Cpu *c) { RET(1); }      /* PVRSRVOpen: the services connecti
 static void h_release(Cpu *c) { RET(0); }   /* PVRSRVRelease */
 /* sceGpuSignalWait(uint32 *last seen, timeout): the kernel sleeps while *last seen == its completion counter,
  * then stores the counter. The host's work completes at the kick, except a scene's notification held back for its
- * visibility counts (kick): those the wait completes first, waiting for the GPU as the console's would */
+ * visibility counts (kick): those the wait completes first, waiting for the GPU as the console's would.
+ *
+ * Giving the slot up when nothing has completed (2026-11-27). The console's kernel blocks here on the GPU interrupt's
+ * condition variable, so a caller looping on this call sleeps until the counter moves -- libgxm polls with it from
+ * every `while (*addr != value)` loop (NotificationWait, Finish, ring reuse), taking its word from
+ * sceKernelGetTLSAddr(0x44), and ignores the result (dev/research/gpumap.py's model of this call). The host has no
+ * such signal and returned at once, so those loops spun: one 45-minute session dispatched 61,163,229 of these calls
+ * and 122,326,459 sceKernelGetTLSAddr calls -- 22,000 and 45,000 a second -- while its CRI Server Manager thread's
+ * CPU share climbed from 0.3% to 93.5% of a core and its per-frame sleeps collapsed to about 1 ms
+ * (docs/psnova/README.md, open question 2). Yielding lets the threads that will advance the counter run. It cannot
+ * end a wait the console would have ended: gfx_vis_settle and gxm_finish_poll above have already completed whatever
+ * the GPU had, and the counter is stored either way. */
 static void h_signal_wait(Cpu *c) {
 	extern void gfx_vis_settle(void); gfx_vis_settle();
 	extern void gxm_finish_poll(void); gxm_finish_poll();   /* (a Finish under way: its words checked again, gxm_sony.c) */
-	if (A0) WR32(A0, __atomic_load_n(&signal_counter, __ATOMIC_SEQ_CST));
+	uint32_t now = __atomic_load_n(&signal_counter, __ATOMIC_SEQ_CST);
+	uint32_t seen = A0 ? RD32(A0) : now;   /* the caller's own value: equal means nothing has completed since it looked */
+	if (A0) WR32(A0, now);
+	if (seen == now) { int b = sched_block_begin(); sched_yield(); if (b) sched_block_end(); }
 	RET(0);
 }
 
