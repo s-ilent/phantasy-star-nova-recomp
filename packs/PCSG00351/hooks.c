@@ -4,6 +4,7 @@
  * runtime/core/hooks.h.
  */
 #include "hooks.h"
+#include "guestwatch.h"   /* gwatch_read_arm: the read watch, for naming the code that reads the settings */
 
 /*
  * Diagnostics for the input thread (RECOMP_PSN_INPUT_TRACE=1), 2026-11-18. The game's controller is read by an Aska
@@ -44,6 +45,7 @@ void recomp_hook_psn_pad_update(Cpu *c) {
  * a switch, it writes nothing: the game's own code runs untouched.
  */
 static void psn_settings_trace(void);   /* below: the option record, under RECOMP_PSN_SETTINGS_TRACE */
+static void psn_settings_read_watch(void);   /* below: the read watch that names the record's reader */
 void recomp_hook_psn_frame_rate(Cpu *c) {
 	(void)c;
 	static int last = 30;
@@ -61,6 +63,7 @@ void recomp_hook_psn_frame_rate(Cpu *c) {
 			fprintf(stderr, "    psn clock: frame %llu target %u fps, last frame %u vblanks = %.4f s\n", (unsigned long long)display_frames(), RD32(t0 + 0xcc), RD16(t0 + 0x8c), f); }
 	}
 	psn_settings_trace();
+	psn_settings_read_watch();
 	if (want == 30 && last == 30) return;
 	const uint32_t t = RD32(obj);
 	if (!t) return;
@@ -108,41 +111,64 @@ static void psn_settings_trace(void) {
 		        rec, (unsigned long long)display_frames(), camLR, camUD, RD32(rec + 0x164), RD32(rec + 0x168),
 		        RD32(rec + 0x16c), RD32(rec + 0x170), stale);
 	if (n != 1261 && n != 6001) return;
-	{	/* Three fingerprints in one pass, because nothing holds the record's own address (that scan found no copy of it
-		 * anywhere in the data segment or the low heap). (a) A float holding the camera up/down speed: if the game turns
-		 * the option into a float for the camera, that copy is a unique word and the place to scale. (b) A word pointing
-		 * a little below the record, the base of the object whose field the record is, which is what the game would hold
-		 * instead. (c) The arena base the game was handed. Any of them in the data segment is a compile-time constant
-		 * whose movw/movt halves name every user of the settings.
-		 * The record itself cannot be scaled: its fields are integers 0..100 (1 and 99 read back as those integers, not as
-		 * floats), so a 30/fps factor quantises, and at 120 Hz the factor 0.25 would round the operator's own 1 to 0. */
+	{	/* A copy of the camera's own two speeds, as a pair. They are adjacent in the record, so a copy that keeps them
+		 * together is two adjacent words equal to 1 and 99 in either order, or two adjacent floats equal to 1.0 and 99.0.
+		 * Either is a strong fingerprint, unlike a single value (233-507 matches) or a 256 KB pointer window (chance), and
+		 * both of the last three candidates were rejected on exactly that ground: a table entry that happens to be 99.0,
+		 * a stray heap pointer, and the arena base are all common. Eight words either side of a hit say whether it sits
+		 * in something camera-shaped. */
+		uint32_t fLR, fUD; { float a1 = (float)camLR, a2 = (float)camUD; memcpy(&fLR, &a1, 4); memcpy(&fUD, &a2, 4); }
 		static const struct { uint32_t lo, hi; const char *what; } where[] = {
 			{ 0x83b80000u, 0x83c3c3a0u, "data" },
 			{ 0x10000000u, 0x28000000u, "heap" },
 		};
-		uint32_t f99 = 0, near = 0, arena = 0, printed = 0;
-		for (unsigned w = 0; w < sizeof where / sizeof where[0]; w++)
-			for (uint32_t a = where[w].lo; a + 4 <= where[w].hi; a += 4) {
-				uint32_t v = RD32(a);
-				if (v == 0x42c60000u) {   /* 99.0f */
-					f99++;
-					if (printed++ < 30) fprintf(stderr, "    psn settings: a float %u.0 for the camera up/down speed at %#x (%s) frame %llu\n",
-					                             camUD, a, where[w].what, (unsigned long long)display_frames());
-				}
-				if (v && v <= rec && rec - v < 0x40000u) {
-					near++;
-					if (printed++ < 30) fprintf(stderr, "    psn settings: %#x (%s) points %#x, %#x below the record (frame %llu)\n",
-					                             a, where[w].what, v, rec - v, (unsigned long long)display_frames());
-				}
-				if (v == 0x1031d000u) {
-					arena++;
-					if (printed++ < 30) fprintf(stderr, "    psn settings: ASKA_HEAP's base named at %#x (%s) (frame %llu)\n",
-					                             a, where[w].what, (unsigned long long)display_frames());
-				}
+		uint32_t ipairs = 0, fpairs = 0, printed = 0;
+		for (unsigned w = 0; w < sizeof where / sizeof where[0]; w++) {
+			uint32_t lo = where[w].lo + 32, hi = where[w].hi - 32;
+			for (uint32_t a = lo; a < hi; a += 4) {
+				uint32_t x = RD32(a), y = RD32(a + 4);
+				int ip = (x == camLR && y == camUD) || (x == camUD && y == camLR);
+				int fp = (x == fLR && y == fUD) || (x == fUD && y == fLR);
+				if (!ip && !fp) continue;
+				if (ip) ipairs++;
+				if (fp) fpairs++;
+				if (printed++ >= 12) continue;
+				fprintf(stderr, "    psn settings: %s pair at %#x (%s) frame %llu:",
+				        ip ? "integer" : "float", a, where[w].what, (unsigned long long)display_frames());
+				for (int k = -8; k <= 8; k++) fprintf(stderr, " %#x", RD32(a + 4 * k));
+				fprintf(stderr, "\n");
 			}
-		fprintf(stderr, "    psn settings: %u floats for camUD, %u words point below the record, %u name ASKA_HEAP (frame %llu)\n",
-		        f99, near, arena, (unsigned long long)display_frames());
+		}
+		fprintf(stderr, "    psn settings: %u integer pairs and %u float pairs for (%u, %u) (frame %llu)\n",
+		        ipairs, fpairs, camLR, camUD, (unsigned long long)display_frames());
 	}
+}
+
+/*
+ * Naming the code that reads the settings (2026-11-27). Six ways of finding it failed: one option value matched 233-507
+ * words, the record's own address is held nowhere in the data segment or the low heap, neither of the two data addresses
+ * the scan named is ever materialised with movw/movt (the control proves that search works: 47 sites for the vsync slot
+ * and 0 for psn_frame_step, which is why that write did nothing), a 256 KB pointer window and the arena base are both
+ * common enough to match by chance, and 171 functions read three of the record's six field offsets.
+ *
+ * The read watch has none of that ambiguity. It makes the pages under a range inaccessible; the first access to one
+ * opens it and calls the hook. The recompiled game is C, so the hook's own host backtrace IS the guest call chain
+ * (fn_<address> frames, innermost first, as the "call to %#x" path puts it), and that names the reader outright.
+ * RECOMP_PSN_SETTINGS_READ=1 arms the two camera speeds and re-arms every frame, since the first access opens the page.
+ * The whole page faults, so a record sharing its page with hot data would be noisy: the first 24 hits print.
+ */
+static void psn_read_hit(uint32_t addr) {
+	static unsigned n; if (n++ >= 24) return;
+	fprintf(stderr, "    psn settings: read of %#x (frame %llu), innermost guest frame last:\n", addr, (unsigned long long)display_frames());
+	plat_backtrace(stderr);
+}
+static void psn_settings_read_watch(void) {
+	static int on = -1;
+	if (on < 0) { on = getenv("RECOMP_PSN_SETTINGS_READ") != 0; if (on) gwatch_set_read_hook(psn_read_hit); }
+	if (!on) return;
+	static uint32_t wrec;
+	if (!wrec) { const char *e = getenv("RECOMP_PSN_SETTINGS"); wrec = e && *e ? (uint32_t)strtoul(e, 0, 0) : 0x14bc7f94u; }
+	if (wrec) gwatch_read_arm(wrec + 0x15c, 8);   /* both camera speeds, adjacent */
 }
 
 /*
