@@ -679,7 +679,7 @@ static int32_t const_as_int(int ch) { switch (ch) { case 5: return 1; case 6: re
 struct UsseProgram {
 	uint32_t addr;
 	uint32_t hash, size;   /* of the GXP bytes at addr: the decode is shared between addresses holding the same program and redone when the bytes at an address change */
-	int is_fragment, supported;
+	int is_fragment, supported, malformed;   /* malformed: the header's code counts and offsets don't fit the program's size -- a blob, or the patcher's ring caught mid-write (gxp_code_bounds): nothing decoded, so shader_translate skips the draw */
 	int pa_words;          /* vertex: PA words the program can read (header's primary register count, the attribute slots, the index/instance registers), rounded up to 4 -- the GPU backend's per-vertex record */
 	UOp *sec, *prim; int nsec, nprim;
 	UsseVertexLayout vl;
@@ -1618,12 +1618,24 @@ uint32_t usse_gxp_hash(const void *gxp, uint32_t *size) {   /* (of bytes anywher
 	for (; i < n; i++) h = (h ^ b[i]) * 0x100000001B3ull;
 	return (uint32_t)(h ^ (h >> 32));
 }
-int usse_gxp_sane(const void *gxp, uint32_t size) {
-	const uint8_t *b = gxp; uint32_t f[5]; memcpy(f, b + H_PRIM_INSTR_COUNT, sizeof f);   /* (60..76: primary count, offset; secondary count, start, end) */
+/* the code slices inside the program's own size and their counts under the cap: usse_gxp_sane's code half, and
+ * decode_program's guard too (2026-11-27). The live path had none, and a header whose +60 count doesn't describe the
+ * bytes sent the decode off their end: Phantasy Star Nova's shader patcher registered a program at 0x1110e410 whose
+ * counts read 222,026,266 instructions, 19 shaders' worth of translation walked them on the render thread under the
+ * renderer lock, and the picture -- with the cutscene's audio -- froze for 55.2 s (the 2026-11-27 04:0x session's
+ * hitch 13, frame 2137). The patcher writes into a ring, so a decode can also catch a program mid-write: the next
+ * frame hashes differently and decodes it again. */
+static int gxp_code_bounds(const uint8_t *b, uint32_t size) {
+	uint32_t f[5]; memcpy(f, b + H_PRIM_INSTR_COUNT, sizeof f);   /* (60..76: primary count, offset; secondary count, start, end) */
 	const uint64_t end = size, pn = f[0], pc = H_PRIM_OFF + (uint64_t)f[1], s0 = f[3], s1 = f[4];
 	if (size < 128 || pn > (1u << 16) || (pn && pc + 8 * pn > end)) return 0;
 	uint64_t sn = s1 + 4 >= s0 ? (s1 + 4 - s0) / 8 : 0; if (f[2] && f[2] < sn) sn = f[2];   /* (decode_program's) */
 	if (sn && (sn > (1u << 16) || H_SEC_OFF + s0 + 8 * sn > end)) return 0;
+	return 1;
+}
+int usse_gxp_sane(const void *gxp, uint32_t size) {
+	const uint8_t *b = gxp;
+	if (!gxp_code_bounds(b, size)) return 0;
 	/* and each header table within the program and of a sane size (h_table_count): a blob whose counts don't fit isn't a
 	 * program (gxp_index.c filters the game's files with this) */
 	static const struct { int count, off; uint32_t entry, cap; } tab[5] = {
@@ -1646,7 +1658,14 @@ int usse_program_pa_words(const UsseProgram *p) { return p->pa_words; }
 uint32_t usse_float_to_lane(float v, int type) { return float_to_lane(v, type); }   /* the interpreter's own conversion, for gfx_soft.c's direct vertex packer */
 /* the decode itself, into p (usse_get's tables, or usse_decode_uncached's own) */
 static void decode_program(UsseProgram *p, uint32_t prog_addr, uint32_t hash, uint32_t size) {
-	p->hash = hash; p->size = size; p->supported = 1; p->additive = 0;   /* (new bytes at a known address: decided again) */
+	p->hash = hash; p->size = size; p->supported = 1; p->malformed = 0; p->additive = 0;   /* (new bytes at a known address: decided again) */
+	if (!gxp_code_bounds(G(prog_addr), size)) {   /* the counts don't describe these bytes: decode nothing */
+		p->malformed = 1; p->supported = 0;
+		static int said; if (__atomic_fetch_add(&said, 1, __ATOMIC_RELAXED) < 16)
+			fprintf(stderr, "    usse: program %#x: its code's counts don't fit its %u bytes (primary %u at +%u, secondary %u): not decoded\n",
+			        prog_addr, size, RD32(prog_addr + H_PRIM_INSTR_COUNT), RD32(prog_addr + H_PRIM_OFF), RD32(prog_addr + H_SEC_INSTR_COUNT));
+		return;
+	}
 	uint32_t flags = RD32(prog_addr + H_FLAGS);
 	p->is_fragment = flags & 1;
 	uint32_t pn = RD32(prog_addr + H_PRIM_INSTR_COUNT), pc = pn ? prog_addr + H_PRIM_OFF + RD32(prog_addr + H_PRIM_OFF) : 0;
@@ -1702,6 +1721,7 @@ UsseProgram *usse_decode_uncached(uint32_t prog_addr) {
 void usse_program_free(UsseProgram *p) { if (p) { free(p->prim); free(p->sec); free(p); } }
 int usse_is_fragment(const UsseProgram *p) { return p->is_fragment; }
 int usse_supported(const UsseProgram *p) { return p->supported; }
+int usse_program_malformed(const UsseProgram *p) { return p->malformed; }
 int usse_primary_reads_memory(const UsseProgram *p) { for (int i = 0; i < p->nprim; i++) if (p->prim[i].op == OP_LDST) return 1; return 0; }
 const UOp *usse_program_code(const UsseProgram *p, int secondary, int *count) {
 	*count = secondary ? p->nsec : p->nprim;

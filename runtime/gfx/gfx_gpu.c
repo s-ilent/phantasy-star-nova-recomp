@@ -940,6 +940,7 @@ static ShaderEntry *shader_find(uint32_t hash, uint32_t hash2, int kind, uint32_
 /* prog translated into e (its key fields set): the job that builds it (shader_enqueue), 0 if the translation failed */
 static int shader_translate(ShaderEntry *e, const UsseProgram *prog, const UsseVertexLayout *vl, const UsseFragLayout *fl, const uint32_t sa_tex_unit[256], const UsseVfLayout *vf, ShaderJob *sj) {
 	int smp_units[16], nsmp = 0;
+	if (usse_program_malformed(prog)) return 0;   /* its header's counts don't describe its bytes (usse.c decode_program): nothing decoded, so nothing to translate -- the draw is skipped, as a failed translation's is */
 	fetch_mode(); canon_vary_on();   /* (sets the translator's FRAGCOLOR mode and varying layout before its first module) */
 	uint64_t tb0 = us_now();
 	usse_spirv_set_pcf(e->pcf ? e->pcf_unit : -1, e->pcf); usse_spirv_set_points(e->points); usse_spirv_set_fetch_zero(e->fzero >= USSE_FB_LERP_KEEP ? 2 : e->fzero ? 1 : 0); usse_spirv_set_motion(e->motion);
