@@ -310,6 +310,7 @@ static bool game_option(const char *name) {
 		if ((p == e || p[-1] == ',' || p[-1] == ' ') && (p[n] == 0 || p[n] == ',' || p[n] == ' ')) return true;
 	return false;
 }
+extern "C" int display_vblank_hz(void);   /* (hooks.h) the vblank grid rate in effect, which is what caps a game's own pacing */
 static void set_frame_rate(int fr) { P.fr = fr; settings_set_int("frame_rate", fr); settings_save(); }
 static void set_tcs(float v) { P.tcs = v; settings_set_float("touch_cursor_speed", v); settings_save(); }
 static void set_gyro(int on) { P.gyro = on != 0; settings_set_int("gyro", P.gyro); settings_save(); }
@@ -475,8 +476,14 @@ static void langs_scan(void) {
 static void page_game(void) {
 	prefs_load();
 	if (!ui::rows_begin("game")) return;
-	ui::row("Frame rate", "60 is experimental: parts of a game timed in fixed 1/30 s steps can run fast.");
-	{ static const char *const names[2] = {"30##fr", "60##fr"}; int v = P.fr >= 60; if (ui::segmented(names, 2, &v)) set_frame_rate(v ? 60 : 30); }
+	{	/* The grid is fixed by the first vblank a game waits on, and the guest reads the display's refresh rate once, so the
+		 * rate that moves the grid needs the next start. The line shows the grid in effect: that is what caps a game. */
+		char note[224]; std::snprintf(note, sizeof note,
+			"A game paces at its grid's rate, %d Hz now. 30 and 60 differ in the game's own target and apply at once. 120 is 60's target on the panel's grid, so it needs the next start.",
+			display_vblank_hz());
+		ui::row("Frame rate", note);
+	}
+	{ static const char *const names[3] = {"30##fr", "60##fr", "120##fr"}; int v = P.fr >= 120 ? 2 : P.fr >= 60 ? 1 : 0; if (ui::segmented(names, 3, &v)) set_frame_rate(v == 2 ? 120 : v == 1 ? 60 : 30); }
 	langs_scan();
 	if (g_nlang > 0) {   /* the game's text (and movies) in another language: a file overlay picked at start (io.c host_lang) */
 		ui::row("Language", "The game's text and movies. Original is the game as released. Applies the next time the game starts.");
@@ -930,7 +937,8 @@ static void menu_view(void) {
 	if (game_option("character_detail")) { ImGui::TextDisabled("Character detail"); ImGui::SetNextItemWidth(170); if (ImGui::SliderFloat("##chr", &P.chr, 1.0f, 8.0f, "%.1fx")) set_chr(P.chr); }
 	if (ImGui::BeginMenu("Frame rate")) {
 		if (ImGui::MenuItem("30", nullptr, P.fr < 60)) set_frame_rate(30);
-		if (ImGui::MenuItem("60 (experimental)", nullptr, P.fr >= 60)) set_frame_rate(60);
+		if (ImGui::MenuItem("60 (experimental)", nullptr, P.fr >= 60 && P.fr < 120)) set_frame_rate(60);
+		if (ImGui::MenuItem("120 (next start)", nullptr, P.fr >= 120)) set_frame_rate(120);
 		ImGui::EndMenu();
 	}
 	if (ImGui::BeginMenu("On-screen stats")) {
