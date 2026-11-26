@@ -6,11 +6,14 @@ from PIL import Image, ImageDraw, ImageFont
 from rmdlib import Rmd, LOCAL_BASE
 import rmdwrite
 from english_layout import CAPTION_CELL, WIDTH_PX, reflow
+from glyph_slicing import letter_slice_spans
 
 BASE_LATIN = 18        # the game's Latin glyphs stand on row ~18
 PARAM_LEN = {0x8081: 1, 0x8099: 1, 0x8094: 2}
 TAG = re.compile(r'\{ruby:([^}]*)\}|\{/ruby\}|\{end\}|\{/color\}|\{([0-9a-f]{4})(?::([0-9a-f]*))?\}|\n|.', re.S)
 class Encoder:
+    """Encode translated text as game-compatible message glyph atlases."""
+
     def __init__(self, font_path, fallback_font_path, settings, code_of, pic_of, charset):
         self.font_path = font_path
         self.fallback = set(settings['fallback'])
@@ -136,27 +139,34 @@ class Encoder:
                     cell_glyph = (*cell_glyph, high_cell)
                 yield ('pic', key, cell_glyph)
 
-    def _slices(self, items, maxw):
-        """cut every drawn picture wider than maxw into slices of equal width (at most maxw px),
-        each a glyph of its own with advance = width, so they join seamlessly (2026-11-19, docs/psnova/text-render-faults.md):
-        the game draws each glyph's 4 shadow copies offset by 5 % of the glyph's width (a 60-px word picture got a shadow
-        3 px off to the side), and the cutscene subtitle drawer fits every glyph into its 21-px cell (wide pictures were
-        squeezed, narrow ones stretched). Slices of the game's own 21 px behave like its own glyphs in both."""
+    def _slices(self, items: list[tuple], maxw: int) -> list[tuple]:
+        """Split pictures into bounded glyphs, keeping Latin edges between letters.
+
+        Render the run whole to preserve kerning, then choose character boundaries:
+        independently filtered quads and their outlines expose cuts inside letters.
+        Other pictures retain uniform slicing; fixed caption cells use their own path.
+        """
         out = []
         for x in items:
             if x[0] != 'pic' or x[2][0].shape[1] <= maxw:
                 out.append(x); continue
             glyph = x[2]
             a = glyph[0]; W = a.shape[1]
-            n = -(-W // maxw)                        # slices of equal width <= maxw (no padding: a padded last slice
-            sw = -(-W // n)                          # left a gap before the next character, 2026-11-19)
-            for k in range(0, W, sw):
-                piece = a[:, k:k + sw]
+            if isinstance(x[1], str) and x[1].startswith('R:'):
+                text = x[1][2:]
+                origin, _ = self._latin_geometry(text)
+                spans = letter_slice_spans(self.latin, text, origin, W, maxw)
+            else:
+                n = -(-W // maxw)
+                sw = -(-W // n)
+                spans = [(k, min(k + sw, W)) for k in range(0, W, sw)]
+            for k, end in spans:
+                piece = a[:, k:end]
                 key = 's:' + hashlib.sha1(bytes(piece.shape) + piece.tobytes()).hexdigest()[:16]
                 sliced = (piece.copy(), piece.shape[1], 10)
                 if len(glyph) == 4:
                     scale = self.english_atlas_scale
-                    sliced = (*sliced, glyph[3][:, k * scale:(k + sw) * scale].copy())
+                    sliced = (*sliced, glyph[3][:, k * scale:end * scale].copy())
                 out.append(('pic', key, sliced))
         return out
 
