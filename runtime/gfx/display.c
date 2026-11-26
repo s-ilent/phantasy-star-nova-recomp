@@ -210,8 +210,25 @@ static void h_set_frame_buf(Cpu *c) {
  * the next tick after now (restarting the period from "now" would add a whole period to every
  * late frame) */
 static uint64_t vblank0;
-static const uint64_t vb_period = 16667;
-static uint64_t wall_edges(void) { uint64_t t = now_us(); if (!vblank0) vblank0 = t; return (t - vblank0) / vb_period; }   /* edges since the first wait */
+int display_frame_rate_want(void);   /* (below: the frame_rate setting's own number, 30..120) */
+/* The grid's rate, in Hz (2026-11-27). 60 unless the frame-rate setting asks for more than 60, when it follows the
+ * panel the window is on: a game's own pacing is one vblank a frame at "60" (packs/PCSG00351/hooks.c: its limiter
+ * waits uidiv(60, T+0xcc) vblanks), so this rate is what caps a game, and a cap above what the window presents at
+ * would only judder. The pack's step for the guest's clock follows this rate too, so its seconds stay real. */
+int display_vblank_hz(void) {
+	static int env = -2;
+	if (env == -2) { const char *e = getenv("RECOMP_VBLANK_HZ"); env = e && *e ? atoi(e) : 0; if (env < 30) env = 0; }
+	int hz = env;
+	if (!hz && display_frame_rate_want() >= 120) { extern int window_display_hz(void); hz = window_display_hz(); }
+	if (hz < 30) hz = 60; else if (hz > 480) hz = 480;
+	return hz;
+}
+static uint64_t vb_period_cached;
+static uint64_t vb_period_us(void) {   /* one vblank's microseconds: the grid's edge spacing */
+	if (!vb_period_cached) vb_period_cached = (uint64_t)(1000000.0 / display_vblank_hz() + 0.5);
+	return vb_period_cached;
+}
+static uint64_t wall_edges(void) { uint64_t t = now_us(); if (!vblank0) vblank0 = t; return (t - vblank0) / vb_period_us(); }   /* edges since the first wait */
 /* RECOMP_UNPACED=1 (with RECOMP_CLOCK=fixed): a throughput benchmark. The grid is the fixed clock's own vblank count instead of
  * the wall's: a wait that counts vblanks moves the clock and returns, one that counts none (a polling pad thread) waits for
  * another thread to move it, and nothing sleeps to an edge. The game sees the same clock as in a paced run (the fixed clock
@@ -225,7 +242,7 @@ static int unpaced(void) {
 	return from >= 0 && frames >= (uint64_t)from;
 }
 static uint64_t vb_now(void) { return unpaced() ? vclock_edges() : wall_edges(); }
-static uint64_t edge_us(uint64_t e) { return unpaced() ? 0 : vblank0 + e * vb_period; }   /* when edge e is, for a sleep to it (0: at once) */
+static uint64_t edge_us(uint64_t e) { return unpaced() ? 0 : vblank0 + e * vb_period_us(); }   /* when edge e is, for a sleep to it (0: at once) */
 /* vb_setbuf (above): the edge count when the frame buffer was last set: the flip lands at the next edge */
 static __thread uint64_t vb_last_target;    /* the edge this thread last waited for */
 /* sleep until edge `target` (at least the next one), counting it for the fixed guest clock */
@@ -264,11 +281,11 @@ static void vb_sleep_until(uint64_t at) {   /* at: now_us() time; the thread is 
 	}
 	if (b) sched_block_end();
 }
-static void vb_sleep_to_edge(uint64_t edge) { (void)vb_now(); vb_sleep_until(vblank0 + edge * vb_period); }   /* (vb_now starts the grid if nothing waited yet) */
+static void vb_sleep_to_edge(uint64_t edge) { (void)vb_now(); vb_sleep_until(vblank0 + edge * vb_period_us()); }   /* (vb_now starts the grid if nothing waited yet) */
 static void vb_wait_until(uint64_t target, uint32_t count) {
 	reads_in_row = 0; setbuf_latched = 0;   /* (h_wait_vblank's latch: only the first display wait after SetFrameBuf) */
 	uint64_t now = vb_now(); if (target <= now) target = now + 1;
-	uint64_t t = now_us(), at = vblank0 + target * vb_period;
+	uint64_t t = now_us(), at = vblank0 + target * vb_period_us();
 	if (getenv("RECOMP_VBLANK_TRACE")) { static int k; if (k++ < 60) fprintf(stderr, "    vblank wait: edge %llu (now %llu), sleeping %lld us (frame %llu)\n", (unsigned long long)target, (unsigned long long)now, (long long)(at > t ? at - t : 0), (unsigned long long)frames); }
 	if (at > t) vb_sleep_until(at);
 	if (unpaced() && !count) {   /* (a wait that moves no clock: until another thread's does, or a while) */
@@ -330,8 +347,8 @@ static void vb_wait_setbuf(uint64_t target, uint32_t count) {
  * menu's choice applies at once. */
 static int forced_rate = -1;   /* display_force_frame_rate: a capture's switch (verify.c's F6), over everything else */
 void display_force_frame_rate(int fr) { forced_rate = fr; }
-static int frame_rate_60(void) {
-	if (forced_rate >= 0) return forced_rate >= 60;
+int display_frame_rate_want(void) {   /* the frame_rate setting's own number: 30 and 60 are 60-relative for a game's limiter (see display_vblank_hz), 120 asks for the unlock */
+	if (forced_rate >= 0) return forced_rate;
 	static int env = -2; static long from = -2;
 	if (env == -2) { const char *e = getenv("RECOMP_FRAME_RATE"); env = e && *e ? atoi(e) : -1; }
 	/* RECOMP_FRAME_RATE_AT="frame:rate,...": the rate from each presented frame on (the last entry at or before the frame
@@ -340,22 +357,22 @@ static int frame_rate_60(void) {
 	if (at) {
 		int r = 30;
 		for (const char *q = at; *q; ) { unsigned long f = strtoul(q, (char **)&q, 10); int v = 30; if (*q == ':') v = (int)strtol(q + 1, (char **)&q, 10); if (frames >= f) r = v; if (*q == ',') q++; else break; }
-		return r >= 60;
+		return r;
 	}
 	/* RECOMP_FRAME_RATE_FROM=n: 60 from presented frame n on (a recorded session plays its frame-keyed
 	 * input at 30 into a level, then the measurement runs at 60) */
 	if (from == -2) { const char *e = getenv("RECOMP_FRAME_RATE_FROM"); from = e && *e ? atol(e) : -1; }
-	if (from >= 0) return frames >= (uint64_t)from;
+	if (from >= 0) return frames >= (uint64_t)from ? 60 : 30;
 	/* RECOMP_FRAME_RATE_UNTIL=n: 60 up to presented frame n, 30 from there (a recorded 60 fps session
 	 * replayed to a frame-rate bug, then the same moment at 30: Uncharted's companion stuck on a log) */
 	static long until = -2;
 	if (until == -2) { const char *e = getenv("RECOMP_FRAME_RATE_UNTIL"); until = e && *e ? atol(e) : -1; }
-	if (until >= 0) return frames < (uint64_t)until;
-	return (env >= 0 ? env : settings_int("frame_rate", 30)) >= 60;
+	if (until >= 0) return frames < (uint64_t)until ? 60 : 30;
+	return env >= 0 ? env : settings_int("frame_rate", 30);
 }
-int display_frame_rate_60(void) { return frame_rate_60(); }
-float display_frame_dt(void) { uint64_t e = __atomic_load_n(clock_fixed() ? &frame_edges_g : &frame_edges, __ATOMIC_RELAXED); return (float)(e < 1 ? 1 : e > 2 ? 2 : e) / 60.0f; }   /* 1/60..1/30 s (hooks.c: a game's fixed 1/30 steps at 60 fps) */
-static uint32_t swap_interval(uint32_t n) { if (!n) n = 1; if (n > 8) n = 8; return n > 1 && frame_rate_60() ? 1 : n; }
+int display_frame_rate_60(void) { return display_frame_rate_want() >= 60; }
+float display_frame_dt(void) { uint64_t e = __atomic_load_n(clock_fixed() ? &frame_edges_g : &frame_edges, __ATOMIC_RELAXED); return (float)(e < 1 ? 1 : e > 2 ? 2 : e) / (float)display_vblank_hz(); }   /* the seconds the frame just took (hooks.c: a game's fixed steps at the grid's rate) */
+static uint32_t swap_interval(uint32_t n) { if (!n) n = 1; if (n > 8) n = 8; return n > 1 && display_frame_rate_60() ? 1 : n; }
 static void h_wait_setbuf(Cpu *c) { if (!swap_seen) swap_seen = 1; vb_wait_setbuf(vb_setbuf + 1, 1); RET(0); }
 static void h_wait_setbuf_multi(Cpu *c) { uint32_t n = swap_interval(A0); if (n > swap_seen) swap_seen = n; vb_wait_setbuf(vb_setbuf + n, n); RET(0); }
 
@@ -953,9 +970,9 @@ static void h_touch_panel_info(Cpu *c) {   /* front panel 0..1919 x 0..1087; bac
 	WR16(A1 + 8, 0); WR16(A1 + 10, A0 ? 108 : 0); WR16(A1 + 12, 1919); WR16(A1 + 14, A0 ? 889 : 1087);
 	RET(0);
 }
-/* sceDisplayGetRefreshRate(float *): the panel's nominal rate, 59.94 Hz, as the SDK reports it (a
- * theoretical value; the host's vblank grid above runs at 60) */
-static void h_refresh_rate(Cpu *c) { if (!A0) { RET(0x80290002u); return; } float hz = 59.94f; memcpy(G(A0), &hz, 4); RET(0); }   /* no pointer: SCE_DISPLAY_ERROR_INVALID_ADDR */
+/* sceDisplayGetRefreshRate(float *): the rate the guest's own vblanks are at, as the SDK reports its panel's
+ * (60 by default; display_vblank_hz is the panel's when the frame-rate setting asks for the unlock) */
+static void h_refresh_rate(Cpu *c) { if (!A0) { RET(0x80290002u); return; } float hz = (float)display_vblank_hz(); memcpy(G(A0), &hz, 4); RET(0); }   /* no pointer: SCE_DISPLAY_ERROR_INVALID_ADDR */
 /* sceCtrlSetSamplingMode(mode): 0 digital, 1 analog, 2 analog wide; returns the PREVIOUS mode (the
  * console starts digital). The sticks are reported either way -- a game that left the pad digital
  * doesn't read them */

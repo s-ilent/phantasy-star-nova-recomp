@@ -445,6 +445,17 @@ static void screen_finger(const SDL_Event *e) {
 }
 
 int window_active(void) { return active; }
+/* The panel's refresh rate (0: no window, or SDL won't say), for display.c's vblank grid when a game's frame-rate
+ * setting asks for more than 60 (2026-11-27). Read once: the window's monitor is not expected to move mid-session. */
+int window_display_hz(void) {
+	static int hz = -1;
+	if (hz < 0) {
+		hz = 0;
+		if (win) { const SDL_DisplayMode *dm = SDL_GetCurrentDisplayMode(SDL_GetDisplayForWindow(win)); if (dm && dm->refresh_rate > 1) hz = (int)(dm->refresh_rate + 0.5f); }
+		if (hz < 30) hz = 0; else if (hz > 480) hz = 480;
+	}
+	return hz;
+}
 
 static SDL_GPUDevice *gpu;
 void *window_gpu_device(void) { return gpu; }   /* for a future gfx_gpu.c */
