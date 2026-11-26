@@ -65,7 +65,16 @@ void recomp_hook_psn_frame_rate(Cpu *c) {
 	WR32(t + 0xcc, (uint32_t)want);
 	static uint32_t step60 = 0;   /* RECOMP_PSN_60_STEP=<hex float bits>: the step written at 60 instead of 0.016 (a test switch: 0x3d042108 keeps the game's 1/31) */
 	if (!step60) { const char *e = getenv("RECOMP_PSN_60_STEP"); step60 = e && *e ? (uint32_t)strtoul(e, 0, 16) : 0x3c83126fu; if (!step60) step60 = 0x3c83126fu; }
-	WR32(step, want == 60 ? step60 : 0x3d042108u);   /* 0.016 (the data default) / 1/31 (the game's 30 fps value) */
+	/* The step is the seconds ONE VBLANK of this build's grid is worth, so the clock the game keeps from measured
+	 * vblanks (the count at T+0x8c, the seconds at T+0xb0) stays real time at any grid rate: display_vblank_hz is 60
+	 * unless the frame-rate setting asks for more, when the grid follows the panel and the game runs at its rate
+	 * (its limiter waits uidiv(60, T+0xcc) vblanks: one a frame at 60 leaves 120 a second on a 120 Hz grid). */
+	{
+		const int hz = display_vblank_hz();
+		if (want == 30) WR32(step, 0x3d042108u);   /* 1/31: the game's own 30 fps value, unchanged */
+		else if (hz != 60) { union { float f; uint32_t u; } v; v.f = 1.0f / (float)hz; WR32(step, v.u); }
+		else WR32(step, step60);
+	}
 	if (want != last) fprintf(stderr, "    psn frame rate: %d fps (frame %llu)\n", want, (unsigned long long)display_frames());
 	last = want;
 }
