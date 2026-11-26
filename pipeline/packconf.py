@@ -5,9 +5,15 @@ DEFAULTS below. Then:
   [versions."<version>"]   one per build of the game the pack plays, in the order a player would meet them: sha256 (of
                            its eboot.bin.elf: vitarecomp import tells a copy's version by it), status (recommended: the
                            one to play; supported: plays) and the settings that differ in that build (HOOKS, IHOOKS,
-                           GAME_ADDRS, FUNCTION_SEEDS...). A copy with no version recorded reads the first one's.
+                           GAME_ADDRS, FUNCTION_SEEDS, MAIN_BASE...). A copy with no version recorded reads the first one's.
   [when.<NAME>]            settings for when the environment has NAME set (not empty), after the version's:
                            KEY = "..." replaces, append.KEY = "..." adds words to it.
+  MAIN_BASE                where that build's own main program is linked, when it is not a pack's usual 0x81000000: a
+                           dump whose eboot was re-linked (MaiDump's, a release built for a game card) names its base
+                           here, and every address the pack gives for the game itself (HOOKS, IHOOKS, GAME_ADDRS,
+                           FUNCTION_SEEDS) is shifted by the difference. A table may then list another table's
+                           addresses and only its base. The loaded modules' addresses (MOD_HOOKS, MOD_IHOOKS) are never
+                           shifted: those live at 0x88000000 and above, not in the game's own image.
 VERSIONS, the "<version>=<sha256>:<status> ..." list the rest of the pipeline reads, is made from the version tables.
 `packconf.py --check` reads every pack, version by version, with and without each switch, and checks its shape;
 `packconf.py <pack.toml> [version]` prints the settings, NAME=value a line.
@@ -22,7 +28,7 @@ DEFAULTS = {
     "BASE": "game", "SPLIT": "16", "TEST_INPUT": "", "TEST_TOUCH": "", "TEST_ENV": "", "TEST_FRAMES": "600",
     "TEST_TOLERANCE": "1", "ELF": "eboot.bin.elf", "HOOKS": "", "IHOOKS": "", "MOD_HOOKS": "", "MOD_IHOOKS": "",
     "GAME_ADDRS": "", "TITLE_ID": "", "VERSIONS": "", "UPDATE_NOTE": "", "FUNCTION_SEEDS": "", "ONLINE_VERSIONS": "",
-    "LOCALIZE": "",
+    "LOCALIZE": "", "MAIN_BASE": "0x81000000",
 }
 _KEY = re.compile(r"[A-Z][A-Z0-9_]*\Z")
 STATUSES = ("recommended", "supported")
@@ -37,6 +43,26 @@ def _value(path, key, val):
         raise PackError(f"{path}: {key} is neither text nor a number: {val!r}")
     if not _KEY.match(key): raise PackError(f"{path}: {key}: a setting's name is capitals, digits and _")
     return str(val)
+
+
+# the settings whose words are addresses in the game's own image: "0x...:name" (HOOKS, IHOOKS, FUNCTION_SEEDS) or
+# "name=0x..." (GAME_ADDRS). MAIN_BASE shifts these; a module's own addresses (MOD_HOOKS, MOD_IHOOKS) are not here.
+_SHIFTED = ("HOOKS", "IHOOKS", "GAME_ADDRS", "FUNCTION_SEEDS")
+
+
+def shift_addrs(value, delta):
+    """"addr:name"/"addr:mode" words, or "name=addr" words, with delta added to each address. 0: unchanged."""
+    if not delta:
+        return value
+    out = []
+    for word in value.split():
+        if "=" in word:                                   # GAME_ADDRS: name=0x...
+            name, _, addr = word.partition("=")
+            out.append(f"{name}={int(addr, 0) + delta:#x}")
+        else:                                             # HOOKS, IHOOKS, FUNCTION_SEEDS: 0x...:name
+            addr, _, name = word.partition(":")
+            out.append(f"{int(addr, 0) + delta:#x}" + (f":{name}" if name else ""))
+    return " ".join(out)
 
 
 def read(path):
@@ -80,6 +106,13 @@ def load(path, version="", env=None):
         for k, val in w.items():
             if k == "append": v.update({k2: " ".join(x for x in (v.get(k2, ""), str(add)) if x) for k2, add in val.items()})
             else: v[k] = str(val)
+    # MAIN_BASE: where this build's main program is linked. Its own addresses move with it; the modules' do not.
+    try:
+        delta = int(v.get("MAIN_BASE") or 0x81000000, 0) - 0x81000000
+    except ValueError:
+        raise PackError(f"{path}: MAIN_BASE is not a number: {v.get('MAIN_BASE')!r}") from None
+    for k in _SHIFTED:
+        if delta: v[k] = shift_addrs(v.get(k, ""), delta)
     return v
 
 

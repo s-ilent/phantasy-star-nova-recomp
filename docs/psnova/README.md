@@ -6,9 +6,12 @@ The one state file for this game. Correct it in place when a finding changes; gi
 The journey behind it (what was tried, the dead ends, the techniques and the traps): [journal-2026-11-18.md](journal-2026-11-18.md).
 Read that before debugging anything here.
 
-**Last reconciled 2026-11-22** against the dated notes in this folder (the Status table and Open questions below; the
+**Last reconciled 2026-11-27** against the dated notes in this folder (the Status table and Open questions below; the
 other sections are the 2026-11-18/19 record and are kept as history). When a dated note and this file disagree, the
 newer one wins: correct this file.
+
+2026-11-27: added the pack's second 1.05 build, the cartridge/update VPK dumps, which are that program re-linked
+0x1700000 higher, and the `MAIN_BASE` setting that plays it; see "The two 1.05 builds" below.
 
 2026-11-22: checked the launcher with dry-run copies (working, missing and non-running `.venv`;
 no game launch), and corrected the name limit and HD-text test coverage against the linked reports.
@@ -21,9 +24,40 @@ no game launch), and corrected the name limit and HD-text test coverage against 
 | Title id / content id | PCSG00351 / JP0177-PCSG00351_00-NOVAAPPLICATION0 (Japan) |
 | Player's copy | `F:\RECOMP GAMES\Phantasy Star Nova (v1.05)`: `app` (1.00, encrypted, NoNpDrm `work.bin`), `patch` (1.05), `rePatch` (English fan translation: two CPK archives) |
 | Main program | NovaMRom, `eboot.bin` (28.4 MB as ELF); 1.05 SHA-256 `abb45e17...edcf3`, 1.00 `f4b3a669...2542` |
+| Builds the pack plays | `1.05` (the original NoNpDrm/PKG copy) and `1.05-maidump` (the cartridge and update VPK dumps this machine has: the same program re-linked 0x1700000 higher). See [The two 1.05 builds](#the-two-105-builds-2026-11-27) |
 | System libraries it imports | 33 libraries, 500 functions: GXM, libc, kernel, NGS (sound), AvPlayer (movies), Fiber, SaveData/IME/NetCheck dialogs, NP Trophy, Net (offline) |
 | Data | CRI CPK archives: `NOVA_FileList_Vita.cpk` (2.8 GB), `_movie.cpk` (395 MB), the update's `_patch.cpk` (155 MB) |
 | Code size | 40,427 functions in the current analysis (count of 2026-11-22; 39,840 on 2026-11-18); 7.7 M instructions translated to 1.1 GB of C in 100 parts |
+
+## The two 1.05 builds (2026-11-27)
+
+The pack plays one program from two dumps, which differ only in the address it is linked at:
+
+- **`1.05`** — an original NoNpDrm or PKG copy: `eboot.bin.elf` `abb45e17...edcf3`, the main program at `0x81000000`,
+  with the addresses `pack.toml` lists (FUNCTION_SEEDS, HOOKS, IHOOKS).
+- **`1.05-maidump`** — the Japanese cartridge and 1.05 update **VPK** dumps. Their `eboot.bin` starts `SCE\0`, is exactly
+  0x1000 bytes longer than the ELF inside it, and their `sce_module` also holds `libc_m` and `libfios2_m`: the eboot is the
+  1.05 program **re-linked 0x1700000 higher** (`eboot.bin.elf` `74e66d0b...6f1c`, text `0x82700000`..`0x83B6BF90`). Its
+  data (`NOVA_FileList_Vita.cpk`, `_movie.cpk`, `_patch.cpk`, `disc1`) is byte-identical to the originals above. Neither
+  dump needs a licence: both eboots are unencrypted wrappers, so `add` decrypts them with no `work.bin`.
+
+`packconf`'s **`MAIN_BASE`** is the whole of the support: the second table lists the `1.05` addresses unchanged and names
+its own base, and `load()` shifts every address the pack gives for the game itself by the difference. The loaded modules'
+addresses (MOD_HOOKS/MOD_IHOOKS) are never shifted, and `vitarecomp` links the main program at `MAIN_BASE` when it
+analyses a module.
+
+Verified on the VPK dumps 2026-11-27 (single run each): all 8 FUNCTION_SEEDS and all 7 HOOKS/IHOOKS decode to the bytes
+`pack.toml` describes at +0x1700000 — the varargs prologue at `0x83553e70` (`mov ip, sp; push.w {r0-r3}`), the three
+`bx ip` thunks, the `vtable +0x24` load of `psn_input_slot`, and the carried-over `0x839b0d6c`, which the analyser takes
+as ARM and which reads `cmp r1, #0; beq` exactly as the pack records for `0x822b0d6c`. The text segment is `0x146BF90`
+bytes = `0x8246bf90 - 0x81000000`, the range `dev/psnova/even_pointers.py` scans. `import` reports 33 libraries and 500
+functions; `analyze` reports SceLibc 1562 / SceGxm 470 / SceGpuEs4User 65 / SceMp4 273 / SceAvPlayer 299, the same
+figures as the 2026-11-22 record.
+
+**Not proven: the window.** A headless `test` run of this build (1200 frames, exit 0, all three start-up movies decoded
+with audio, ~28 fps, 12,867 draws) shoots frame 1200 black: the *software* renderer (`RECOMP_GFX=soft`, the gate's) skips
+the movie and UI draws there with "no position attribute". Every proven visual claim in this file was captured on the GPU
+path, which is what a player runs. A GPU sighting of the title on this build is owed.
 
 ## How it is built here
 

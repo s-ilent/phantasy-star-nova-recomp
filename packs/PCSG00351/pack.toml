@@ -41,3 +41,20 @@ status = "recommended"
 FUNCTION_SEEDS = "0x81e53e70:thumb 0x81a687a0:arm 0x81a688e8:arm 0x81a698a4:arm 0x81a698b4:arm 0x81a698c4:arm 0x8209d688:arm 0x822b0d6c:thumb"  # the last two: carried over from the development analysis (release 0.1.0 Beta 1)
 HOOKS = "0x81b1c958:psn_pad_update 0x81b2a8bc:psn_tree_insert 0x81a7756c:psn_frame_rate 0x817e850e:psn_rtl_mark 0x817e882e:psn_rtl_mark"   # psn_rtl_mark: Arabic right alignment (with IHOOKS psn_rtl_align; hooks.c, docs/psnova/right-alignment-research.md). diagnostics (hooks.c): the pad device's update (RECOMP_PSN_INPUT_TRACE=1); the map insert that aborts after Start the Game. psn_frame_rate: 60 fps with the frame_rate setting (hooks.c, docs/psnova/60fps-sites.md)
 IHOOKS = "0x81a1f284:psn_input_slot 0x81905b10:psn_rtl_align"   # psn_rtl_align: a box whose message starts with 0x8095 (Arabic) aligns right. diagnostics: each device slot the input thread's loop loads
+
+# 1.05 as the dumps a game dumper re-links carry it: the same program, with every segment and every address inside it
+# 0x1700000 higher. (The dumper's eboot.bin starts "SCE\0" and is exactly 0x1000 bytes longer than the ELF inside it -- a
+# wrapper around a plain ELF -- and the same dump's sce_module also holds libc_m/libfios2_m; the Japanese cartridge and
+# update VPKs have it. An original NoNpDrm/PKG copy is [versions."1.05"] above.)
+# The addresses below are that table's, unchanged: MAIN_BASE is the whole difference, and packconf shifts them by it, so
+# nothing here is hand-computed. The program is the same code, re-linked: 11 of the 11 addresses above (the six
+# FUNCTION_SEEDS "checked against the bytes", the five HOOKS, the two IHOOKS) decode to exactly the bytes the pack
+# describes at +0x1700000, and the text segment is 0x146BF90 bytes -- 0x8246bf90 - 0x81000000, the range
+# dev/psnova/even_pointers.py scans -- at 0x82700000..0x83B6BF90 here.
+[versions."1.05-maidump"]
+sha256 = "74e66d0bafc561f4ba4a763d9539e49833fe5b683c50e60af55745c7a5316f1c"
+status = "supported"
+MAIN_BASE = "0x82700000"
+FUNCTION_SEEDS = "0x81e53e70:thumb 0x81a687a0:arm 0x81a688e8:arm 0x81a698a4:arm 0x81a698b4:arm 0x81a698c4:arm 0x8209d688:arm 0x822b0d6c:thumb"
+HOOKS = "0x81b1c958:psn_pad_update 0x81b2a8bc:psn_tree_insert 0x81a7756c:psn_frame_rate 0x817e850e:psn_rtl_mark 0x817e882e:psn_rtl_mark"
+IHOOKS = "0x81a1f284:psn_input_slot 0x81905b10:psn_rtl_align"

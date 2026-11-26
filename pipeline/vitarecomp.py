@@ -398,7 +398,9 @@ class Game:
 
     def links(self, skip):   # --link for every module but the one named (main: "")
         l = []
-        if skip: l += ["--link", f"{os.path.join(self.W, 'elf', self.ELF)}@0x81000000"]
+        # (the main program at the base this copy's build is linked at: MAIN_BASE in its pack's version table, 0x81000000
+        # in a pack's usual one. A module's analysis resolves the game's own calls through this.)
+        if skip: l += ["--link", f"{os.path.join(self.W, 'elf', self.ELF)}@{self.MAIN_BASE}"]
         for i, m in enumerate(self.MODS):
             if m != skip: l += ["--link", f"{self.modelf(m)}@{self.mod_base(i):#x}"]
         return l
