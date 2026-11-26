@@ -99,11 +99,16 @@ void recomp_hook_psn_frame_rate(Cpu *c) {
  */
 #define PSN_HEAP_LO 0x1031d000u   /* ASKA_HEAP, where the record and the game's objects live */
 #define PSN_HEAP_HI 0x1c31d000u
+#define PSN_REC_DEFAULT 0x14bc7f94u   /* the option record itself: the save log names it, RECOMP_PSN_SETTINGS overrides it */
+static uint32_t psn_rec;
+static uint32_t psn_rec_addr(void) {
+	if (!psn_rec) { const char *e = getenv("RECOMP_PSN_SETTINGS"); psn_rec = e && *e ? (uint32_t)strtoul(e, 0, 0) : PSN_REC_DEFAULT; }
+	return psn_rec;
+}
 static void psn_settings_trace(void) {
 	static int on = -1; if (on < 0) on = getenv("RECOMP_PSN_SETTINGS_TRACE") != 0;
 	if (!on) return;
-	static uint32_t rec; static unsigned n;
-	if (!rec) { const char *e = getenv("RECOMP_PSN_SETTINGS"); rec = e && *e ? (uint32_t)strtoul(e, 0, 0) : 0x14bc7f94u; }
+	static unsigned n; const uint32_t rec = psn_rec_addr();
 	if (!rec) return;
 	uint32_t camLR = RD32(rec + 0x15c), camUD = RD32(rec + 0x160), stale = RD32(rec + 0xa0);
 	if (n++ % 60 == 0)
@@ -155,20 +160,31 @@ static void psn_settings_trace(void) {
  * opens it and calls the hook. The recompiled game is C, so the hook's own host backtrace IS the guest call chain
  * (fn_<address> frames, innermost first, as the "call to %#x" path puts it), and that names the reader outright.
  * RECOMP_PSN_SETTINGS_READ=1 arms the two camera speeds and re-arms every frame, since the first access opens the page.
- * The whole page faults, so a record sharing its page with hot data would be noisy: the first 24 hits print.
+ * The whole page faults, so a record sharing its page with hot data would be noisy, and the page opens on its first access
+ * whatever that access is, so what it names is the page's first reader in each frame. Hits before frame 1200 are skipped,
+ * because the settings loader reads the record at boot and the first frames would be all loader:
+ * RECOMP_PSN_SETTINGS_READ_FROM overrides that. Eight hits carry a backtrace, 160 more just their offset from the record.
  */
 static void psn_read_hit(uint32_t addr) {
-	static unsigned n; if (n++ >= 24) return;
-	fprintf(stderr, "    psn settings: read of %#x (frame %llu), innermost guest frame last:\n", addr, (unsigned long long)display_frames());
-	plat_backtrace(stderr);
+	static unsigned n, dumped; static uint64_t from;
+	if (!from) { const char *e = getenv("RECOMP_PSN_SETTINGS_READ_FROM"); from = e && *e ? strtoull(e, 0, 0) : 1200; }
+	const uint64_t f = display_frames();
+	if (f < from) return;
+	if (dumped++ < 8) {
+		fprintf(stderr, "    psn settings: read of %#x (%+d from the record, frame %llu), innermost guest frame last:\n",
+		        addr, (int)(addr - psn_rec), (unsigned long long)f);
+		plat_backtrace(stderr);
+		return;
+	}
+	if (n++ < 160)
+		fprintf(stderr, "    psn settings: read of %#x (%+d from the record, frame %llu)\n", addr, (int)(addr - psn_rec), (unsigned long long)f);
 }
 static void psn_settings_read_watch(void) {
 	static int on = -1;
 	if (on < 0) { on = getenv("RECOMP_PSN_SETTINGS_READ") != 0; if (on) gwatch_set_read_hook(psn_read_hit); }
 	if (!on) return;
-	static uint32_t wrec;
-	if (!wrec) { const char *e = getenv("RECOMP_PSN_SETTINGS"); wrec = e && *e ? (uint32_t)strtoul(e, 0, 0) : 0x14bc7f94u; }
-	if (wrec) gwatch_read_arm(wrec + 0x15c, 8);   /* both camera speeds, adjacent */
+	const uint32_t rec = psn_rec_addr();
+	if (rec) gwatch_read_arm(rec + 0x15c, 8);   /* both camera speeds, adjacent: re-armed each frame, since the first access opens the page */
 }
 
 /*
