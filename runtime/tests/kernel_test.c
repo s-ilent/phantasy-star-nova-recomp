@@ -33,7 +33,7 @@ int waitstats_on(void) { return 0; }
 uint64_t waitstats_now(void) { return 0; }
 void waitstats_begin(uint64_t t0) { (void)t0; }
 void waitstats_wait(uint64_t t0, uint64_t woken_at) { (void)t0; (void)woken_at; }
-void waitstats_sleep(uint64_t t0) { (void)t0; }
+void waitstats_sleep(uint64_t t0, uint64_t req_ns) { (void)t0; (void)req_ns; }
 void waitstats_name(const char *n) { (void)n; }
 /* "recompiled" guest functions the thread tests start: a table of C functions by fake address */
 static GuestFn guest_fns[32];

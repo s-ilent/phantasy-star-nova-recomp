@@ -30,7 +30,7 @@ typedef struct { char name[32]; uint64_t cpu_at;   /* the CPU time at the window
 #else
 	clockid_t cid;
 #endif
-	uint64_t born, waits, wait_ns, lat_n, lat_ns, lat_max, sleeps, sleep_ns, locks, lock_ns, idle_since, holds, hold_ns, hold_max; } WsThread;   /* holds: the renderer lock's outermost holds, and how long */   /* idle_since: a wait, sleep or lock queue under way (its time so far counts at a report) */
+	uint64_t born, waits, wait_ns, lat_n, lat_ns, lat_max, sleeps, sleep_req_ns, sleep_ns, locks, lock_ns, idle_since, holds, hold_ns, hold_max; } WsThread;   /* holds: the renderer lock's outermost holds, and how long */   /* idle_since: a wait, sleep or lock queue under way (its time so far counts at a report) */
 #define WS_MAX 256
 static WsThread *ws_threads[WS_MAX]; static int ws_n; static pthread_mutex_t ws_m = PTHREAD_MUTEX_INITIALIZER;
 static __thread WsThread *ws_me; static __thread char ws_name[32];
@@ -85,7 +85,9 @@ void waitstats_wait(uint64_t t0, uint64_t woken_at) {   /* a kernel wait that be
 	ADD(waits, 1); ADD(wait_ns, counted(m, t0, now));
 	if (woken_at) { const uint64_t l = now > woken_at ? now - woken_at : 0; ADD(lat_n, 1); ADD(lat_ns, l); if (l > m->lat_max) m->lat_max = l; }
 }
-void waitstats_sleep(uint64_t t0) { WsThread *m = me(); if (!m) return; ADD(sleeps, 1); ADD(sleep_ns, counted(m, t0, waitstats_now())); }
+void waitstats_sleep(uint64_t t0, uint64_t req_ns) {   /* req_ns: what the guest asked to sleep; what it got is sleep_ns, and one counts as one whatever the length */
+	WsThread *m = me(); if (!m) return; ADD(sleeps, 1); ADD(sleep_req_ns, req_ns); ADD(sleep_ns, counted(m, t0, waitstats_now()));
+}
 void waitstats_held(uint64_t t0) { WsThread *m = me(); if (!m) return; const uint64_t d = waitstats_now() - t0; ADD(holds, 1); ADD(hold_ns, d); if (d > m->hold_max) m->hold_max = d; }   /* (gfx_dispatch.c: a hold of the renderer's lock ends) */
 void waitstats_lock(uint64_t t0) { WsThread *m = me(); if (!m) return; ADD(locks, 1); ADD(lock_ns, counted(m, t0, waitstats_now())); }
 static int by_busy(const void *a, const void *b) { const double x = *(const double *)a, y = *(const double *)b; return (x < y) - (x > y); }
@@ -105,15 +107,16 @@ void waitstats_present(void) {   /* display.c, each present: the report every ws
 		rows[nr].busy = 100.0 * (used < span ? used : span) / span; rows[nr].i = i; nr++;
 	}
 	qsort(rows, (size_t)nr, sizeof rows[0], by_busy);
-	fprintf(stderr, "    waits: %.0f presents in %.2f s (%.1f fps); per thread, busiest first: CPU busy%% | waits/frame, blocked ms/frame | sleeps ms/frame | renderer lock: queued/frame ms/frame, held/frame ms/frame max ms | wake latency avg/max us\n",
+	fprintf(stderr, "    waits: %.0f presents in %.2f s (%.1f fps); per thread, busiest first: CPU busy%% | waits/frame, blocked ms/frame | sleeps/frame, asked ms/frame, slept ms/frame | renderer lock: queued/frame ms/frame, held/frame ms/frame max ms | wake latency avg/max us\n",
 	        nf, win / 1e9, nf / (win / 1e9));
 	for (int k = 0; k < nr && k < 14; k++) {
 		WsThread *t = ws_threads[rows[k].i];
-		fprintf(stderr, "    waits:   %-24s %5.1f%% | %6.1f %6.2f | %6.2f | %5.1f %6.2f, %6.1f %6.2f %6.2f | %6.1f %7.1f\n", t->name, rows[k].busy,
-		        t->waits / nf, t->wait_ns / nf / 1e6, t->sleep_ns / nf / 1e6, t->locks / nf, t->lock_ns / nf / 1e6, t->holds / nf, t->hold_ns / nf / 1e6, t->hold_max / 1e6,
+		fprintf(stderr, "    waits:   %-24s %5.1f%% | %6.1f %6.2f | %7.1f %6.2f %6.2f | %5.1f %6.2f, %6.1f %6.2f %6.2f | %6.1f %7.1f\n", t->name, rows[k].busy,
+		        t->waits / nf, t->wait_ns / nf / 1e6, t->sleeps / nf, t->sleep_req_ns / nf / 1e6, t->sleep_ns / nf / 1e6,
+		        t->locks / nf, t->lock_ns / nf / 1e6, t->holds / nf, t->hold_ns / nf / 1e6, t->hold_max / 1e6,
 		        t->lat_n ? t->lat_ns / (double)t->lat_n / 1e3 : 0.0, t->lat_max / 1e3);
 	}
-	for (int i = 0; i < ws_n; i++) { WsThread *t = ws_threads[i]; t->waits = t->wait_ns = t->lat_n = t->lat_ns = t->lat_max = t->sleeps = t->sleep_ns = t->locks = t->lock_ns = t->holds = t->hold_ns = t->hold_max = 0; }
+	for (int i = 0; i < ws_n; i++) { WsThread *t = ws_threads[i]; t->waits = t->wait_ns = t->lat_n = t->lat_ns = t->lat_max = t->sleeps = t->sleep_req_ns = t->sleep_ns = t->locks = t->lock_ns = t->holds = t->hold_ns = t->hold_max = 0; }
 	pthread_mutex_unlock(&ws_m);
 	__atomic_store_n(&ws_start, now, __ATOMIC_RELAXED);
 }

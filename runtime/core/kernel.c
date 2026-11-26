@@ -123,7 +123,7 @@ static pthread_mutex_t klock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t kcond = PTHREAD_COND_INITIALIZER;   /* thread ends */
 static __thread uint32_t cur_tid = 0x40010003;              /* the main thread's */
 static __thread Thread *cur_thread;                         /* 0 on the main thread */
-int waitstats_on(void); uint64_t waitstats_now(void); void waitstats_begin(uint64_t t0); void waitstats_wait(uint64_t t0, uint64_t woken_at); void waitstats_sleep(uint64_t t0); void waitstats_name(const char *n);   /* (debug/waitstats.c) */
+int waitstats_on(void); uint64_t waitstats_now(void); void waitstats_begin(uint64_t t0); void waitstats_wait(uint64_t t0, uint64_t woken_at); void waitstats_sleep(uint64_t t0, uint64_t req_ns); void waitstats_name(const char *n);   /* (debug/waitstats.c) */
 #define SELF() (cur_thread ? cur_thread : &main_thread)
 uint32_t recomp_cur_tid(void) { return cur_tid; }           /* the calling host thread's guest uid (verify.c's RECOMP_WATCH_*) */
 const char *recomp_cur_tname(void) { return SELF()->name; }
@@ -651,7 +651,7 @@ static void h_delay(Cpu *c) {
 	const uint64_t ws_t0 = waitstats_on() ? waitstats_now() : 0;
 	if (ws_t0) waitstats_begin(ws_t0);
 	while (nanosleep(&ts, &ts) && errno == EINTR) ;
-	if (ws_t0) waitstats_sleep(ws_t0);
+	if (ws_t0) waitstats_sleep(ws_t0, (uint64_t)us * 1000u);
 	thread_waits(0, 0);
 	if (b) sched_block_end();
 	guest_time_slept(us);
@@ -1342,6 +1342,7 @@ void kernel_cb_sleep(Cpu *c, uint64_t until_us) {
 	Thread *t = SELF();
 	static int coarse = -1; if (coarse < 0) coarse = getenv("RECOMP_CB_SLEEP_COARSE") != 0;
 	const uint64_t ws_t0 = waitstats_on() ? waitstats_now() : 0;
+	const uint64_t ws_req_ns = ws_t0 && until_us > ws_t0 / 1000 ? (until_us - ws_t0 / 1000) * 1000 : 0;   /* what the caller asked for, for RECOMP_WAIT_STATS */
 	if (ws_t0) waitstats_begin(ws_t0);
 	for (;;) {
 		uint64_t now = mono_us();
@@ -1378,7 +1379,7 @@ void kernel_cb_sleep(Cpu *c, uint64_t until_us) {
 		if (b) sched_block_end();   /* the callbacks are guest code: they run on a slot */
 		if (pending) run_callbacks(c);
 	}
-	if (ws_t0) waitstats_sleep(ws_t0);
+	if (ws_t0) waitstats_sleep(ws_t0, ws_req_ns);
 }
 /* a *CB system call: the pending callbacks first (the kernel delivers them before the wait
  * begins), then the operation, repeated with the time left each time a callback interrupted it */
