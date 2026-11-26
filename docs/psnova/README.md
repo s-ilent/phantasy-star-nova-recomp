@@ -54,10 +54,13 @@ bytes = `0x8246bf90 - 0x81000000`, the range `dev/psnova/even_pointers.py` scans
 functions; `analyze` reports SceLibc 1562 / SceGxm 470 / SceGpuEs4User 65 / SceMp4 273 / SceAvPlayer 299, the same
 figures as the 2026-11-22 record.
 
-**Not proven: the window.** A headless `test` run of this build (1200 frames, exit 0, all three start-up movies decoded
-with audio, ~28 fps, 12,867 draws) shoots frame 1200 black: the *software* renderer (`RECOMP_GFX=soft`, the gate's) skips
-the movie and UI draws there with "no position attribute". Every proven visual claim in this file was captured on the GPU
-path, which is what a player runs. A GPU sighting of the title on this build is owed.
+Seen on the GPU path (the player's own run, `session.log`, 2026-11-27): the main program is loaded where this build links
+it (`loaded 0x82700000 0x146bf90` -- the text size above), the modules load at 0x88000000 and up, frames hold at 30.0 fps
+(33.3/34.2 ms avg/1%low; `gpu 6 scenes 11 draws`, render 0.8 ms, present 0.3 ms), the start-up movies decode and present
+(`avPlayer` threads, `texture ... 960x544 ... re-uploaded (decoded)`), movie sound closes with 0 errors, and the front end
+reaches `open savedata0:system.bin`. A headless `test` run of the same build (1200 frames, exit 0, the movies decoded,
+~28 fps, 12,867 draws) shoots frame 1200 black: the *software* renderer (`RECOMP_GFX=soft`, the gate's) skips the movie
+and UI draws there with "no position attribute", so the gate's frame is not a picture of this build's window.
 
 ## How it is built here
 
