@@ -371,7 +371,7 @@ static void h_save_data_save(Cpu *c) {
 		if (fd < 0) { fprintf(stderr, "    save %s (mode %u, %u bytes): host open failed: %s\n", path ? (char *)G(path) : "", mode, size, strerror(errno)); continue; }
 		if (buf && size) { gwatch_read_open(buf, size); pwrite(fd, G(buf), size, (off_t)off); }
 		close(fd);
-		fprintf(stderr, "    save %s: %u bytes at %llu\n", path ? (char *)G(path) : "", size, (unsigned long long)off);
+		fprintf(stderr, "    save %s: %u bytes at %llu from %#x\n", path ? (char *)G(path) : "", size, (unsigned long long)off, buf);
 	}
 	if (A0) slot_write(RD32(A0), RD32(A0 + 4));   /* the slot: created or updated, its param replaced when one is given */
 	if (STK(0)) WR32(STK(0), 0);
