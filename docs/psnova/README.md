@@ -265,6 +265,19 @@ Reconciled 2026-11-22. In order of priority:
 2. **The long-session slowdown**: reproduce it on such a route (load the Force Lv6 slot after a long session, or a
    long scripted run), then read `session.log`'s GPU-fence, wait and metrics lines for the slow interval before
    changing anything.
+   Measured from a live session, 2026-11-27 (single run; a 45-minute play at render scale 6x, 2584 metrics samples,
+   580 hitches of 100 ms or more, the worst 42.4 s at frame 59047). Its symptoms are not confined to the frame rate:
+   **audio drops out and audio-timed cutscenes pause**, because the runtime paces the guest's audio handovers by the
+   device queue (`runtime/ui/window.c` `audio_output`: "a game times its cutscenes by the buffers it has handed over")
+   and that wait has no timeout.
+   The slowdown itself has a shape: one guest thread's CPU share climbs steadily and saturates. `CRI Server Manager`
+   takes 0.3% of a core at the start of the session and 93.5% (peak 96.0%) by the end, and its per-frame sleeps collapse
+   from 41.6 ms to about 1 ms, so it stops idling and spins (measured across 629 waits blocks). `CRI FS File Access` is
+   blocked 30-89 ms/frame throughout, the Aska render workers block ~92 ms/frame, and at the worst stall the GPU was
+   **0% busy across 42.36 s** while the game's own `speed` read `0.00x`. `CRI Atom AudioOut` is never blocked, so the
+   audio path is a victim and not the cause. This points at the game's CRI streaming layer, most likely at something the
+   server manager polls that never becomes ready. Not established: what it is polling, and whether it or the runtime's
+   file IO is at fault.
 3. 60 fps correctness: fixed-step effects and cutscene timing on longer routes (the arena and base routes only so far).
 4. The missing party in the ruins: needs a route or a save just before it.
 5. Arabic: write the ~9,900 remaining messages (most dialogue and the cutscene subtitles); the squeezed enemy name by
