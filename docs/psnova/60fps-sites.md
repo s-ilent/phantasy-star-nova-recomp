@@ -126,16 +126,27 @@ Generated C address = the address written in this file + `0x1700000` (the pack's
 analysis base `0x81000000`). Checked on both hard hook sites: this file's `0x81a7756c` is `fn_8317756c` and its
 `0x81b1c958` is `fn_8321c958` in `dump/decrypted/PCSG00351/recomp/game_part*.c`.
 
-**Do not hook the timestep section's addresses blind.** Several do not resolve in the generated C:
+**Correction (added the same day).** An earlier version of this note said three of the timestep addresses do not resolve.
+That was my arithmetic, not the file's: `0x81a24788 + 0x1700000` is `0x83124788`, not `0x82a24788`, and `0x81b19e9a` is
+`fn_83219e9a`. Every address checked resolves. The correct pairs:
 
-| this file | +0x1700000 | in the generated C |
-|---|---|---|
-| 0x81b19e9a (pad key-repeat) | 0x82b19e9a | absent |
-| 0x81a24788 (vblank-counter getter) | 0x82a24788 | absent |
-| 0x81b1a082 ("the call to the key repeat") | 0x82b1a082 | present, but it is a `bne`, not a call |
+| this file | in the generated C |
+|---|---|
+| 0x81b19e9a (pad key-repeat) | `fn_83219e9a`, game_part55.c |
+| 0x81b1a082 (its caller) | `fn_8321a082`, game_part55.c |
+| 0x81a24788 (vblank-counter getter) | `fn_83124788`, game_part51.c |
+| 0x81a24408, 0x81a24692, 0x81a247a0, 0x81a24874, 0x81a24924 | game_part51.c |
 
-The 60 fps section's pacing addresses (`0x8178c5f2`, `0x81a242bc`, `0x81a24692`, `0x81a7756c`) are the ones the pack
-actually hooks, and those are the ones to trust. Re-derive a timestep site from the generated C before hooking it.
+Data addresses shift by `ADDR_DATA_DELTA` (`0x1714000`), not by the code delta: the vsync singleton `0x82474314` is
+`0x83B88314` (built in `fn_831242bc` as `movw #0x8314` + `movt #0x83b8`) and the vblank counter `0x8249d100` is
+`0x83BB1100`. In the generated C a data address never appears as one immediate, only as its two `movw`/`movt` halves,
+so search the instruction comments for the pair rather than the whole word.
+
+**The key-repeat gate is vblank-counted, confirmed at instruction level.** `fn_83219e9a` reads the vsync singleton,
+calls `fn_83124788` for the vblank counter (`0x83219eae: bl #0x83124788`), and compares it with the cached copy at
+`[this+0xc8]` (`0x83219ec0: cmp lr, r0`). It advances its delay and interval timers only when the counter changed. The
+gate therefore ticks once per vblank: 60 a second on the console's grid and 120 a second at 120 Hz. The repeat delay is
+half as long at 120 fps, so the reported menu-repeat defect is a factor of two and not four.
 
 **Grid rate is frame rate, which is why 120 fps moves every counter.** The limiter waits `uidiv(60, T+0xcc)` vblanks and
 the pack hook writes 60, so a frame is one vblank and the grid rate *is* the frame rate. A 60 Hz grid therefore cannot
