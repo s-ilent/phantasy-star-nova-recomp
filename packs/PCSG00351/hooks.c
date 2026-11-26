@@ -47,19 +47,25 @@ void recomp_hook_psn_frame_rate(Cpu *c) {
 	(void)c;
 	static int last = 30;
 	const int want = display_frame_rate_60() ? 60 : 30;
+	/* The vsync object pointer and the cloth/physics step are the game's own data, so their addresses come from this
+	 * build's GAME_ADDRS (hooks.h's game_addr) rather than from 1.05's numbers written here: a build that was re-linked
+	 * moves code and data by different amounts, and as literals these addressed another build's image, which left 60 fps
+	 * doing nothing (2026-11-27, pack.toml's ADDR_DATA_DELTA). */
+	const uint32_t obj = game_addr("psn_vsync_object"), step = game_addr("psn_frame_step");
+	if (!obj || !step) return;   /* not an address this build has: game_addr has said so once */
 	{	/* RECOMP_PSN_FPS_TRACE=1: every 300th frame, what the game's clock measured for the frame before (T+0x8c vblanks, T+0xb0 seconds) */
 		static int tr = -1; if (tr < 0) tr = getenv("RECOMP_PSN_FPS_TRACE") != 0;
-		static unsigned n; const uint32_t t0 = RD32(0x82474314u);
+		static unsigned n; const uint32_t t0 = RD32(obj);
 		if (tr && t0 && n++ % 300 == 0) { uint32_t s = RD32(t0 + 0xb0); float f; memcpy(&f, &s, 4);
 			fprintf(stderr, "    psn clock: frame %llu target %u fps, last frame %u vblanks = %.4f s\n", (unsigned long long)display_frames(), RD32(t0 + 0xcc), RD16(t0 + 0x8c), f); }
 	}
 	if (want == 30 && last == 30) return;
-	const uint32_t t = RD32(0x82474314u);
+	const uint32_t t = RD32(obj);
 	if (!t) return;
 	WR32(t + 0xcc, (uint32_t)want);
 	static uint32_t step60 = 0;   /* RECOMP_PSN_60_STEP=<hex float bits>: the step written at 60 instead of 0.016 (a test switch: 0x3d042108 keeps the game's 1/31) */
 	if (!step60) { const char *e = getenv("RECOMP_PSN_60_STEP"); step60 = e && *e ? (uint32_t)strtoul(e, 0, 16) : 0x3c83126fu; if (!step60) step60 = 0x3c83126fu; }
-	WR32(0x82474334u, want == 60 ? step60 : 0x3d042108u);   /* 0.016 (the data default) / 1/31 (the game's 30 fps value) */
+	WR32(step, want == 60 ? step60 : 0x3d042108u);   /* 0.016 (the data default) / 1/31 (the game's 30 fps value) */
 	if (want != last) fprintf(stderr, "    psn frame rate: %d fps (frame %llu)\n", want, (unsigned long long)display_frames());
 	last = want;
 }

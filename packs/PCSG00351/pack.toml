@@ -41,6 +41,9 @@ status = "recommended"
 FUNCTION_SEEDS = "0x81e53e70:thumb 0x81a687a0:arm 0x81a688e8:arm 0x81a698a4:arm 0x81a698b4:arm 0x81a698c4:arm 0x8209d688:arm 0x822b0d6c:thumb"  # the last two: carried over from the development analysis (release 0.1.0 Beta 1)
 HOOKS = "0x81b1c958:psn_pad_update 0x81b2a8bc:psn_tree_insert 0x81a7756c:psn_frame_rate 0x817e850e:psn_rtl_mark 0x817e882e:psn_rtl_mark"   # psn_rtl_mark: Arabic right alignment (with IHOOKS psn_rtl_align; hooks.c, docs/psnova/right-alignment-research.md). diagnostics (hooks.c): the pad device's update (RECOMP_PSN_INPUT_TRACE=1); the map insert that aborts after Start the Game. psn_frame_rate: 60 fps with the frame_rate setting (hooks.c, docs/psnova/60fps-sites.md)
 IHOOKS = "0x81a1f284:psn_input_slot 0x81905b10:psn_rtl_align"   # psn_rtl_align: a box whose message starts with 0x8095 (Arabic) aligns right. diagnostics: each device slot the input thread's loop loads
+# GAME_ADDRS: the game's own data the host hooks above use -- the vsync object pointer the frame limiter reads and the
+# cloth/physics step psn_frame_rate writes (hooks.c). Data, so packconf shifts them by ADDR_DATA_DELTA, not by the code's.
+GAME_ADDRS = "psn_vsync_object=0x82474314 psn_frame_step=0x82474334"
 
 # 1.05 as the dumps a game dumper re-links carry it: the same program, with every segment and every address inside it
 # 0x1700000 higher. (The dumper's eboot.bin starts "SCE\0" and is exactly 0x1000 bytes longer than the ELF inside it -- a
@@ -55,6 +58,13 @@ IHOOKS = "0x81a1f284:psn_input_slot 0x81905b10:psn_rtl_align"   # psn_rtl_align:
 sha256 = "74e66d0bafc561f4ba4a763d9539e49833fe5b683c50e60af55745c7a5316f1c"
 status = "supported"
 MAIN_BASE = "0x82700000"
+# This build's data moved further than its code: the re-link put the data segment 0x1714000 up, not 0x1700000, because
+# it follows code of its own length and its own alignment. Measured from the build itself: the cloth/physics step the
+# pack's hook writes is at 0x83b88334 here and at 0x82474334 in the reference, and that value (1/31 = 0x3d042108) is
+# the only 1/31 in the image's data. With one delta for both, psn_frame_rate read a zeroed gap address, so enabling
+# 60 fps did nothing and the game kept its own 30 (2026-11-27).
+ADDR_DATA_DELTA = "0x1714000"
 FUNCTION_SEEDS = "0x81e53e70:thumb 0x81a687a0:arm 0x81a688e8:arm 0x81a698a4:arm 0x81a698b4:arm 0x81a698c4:arm 0x8209d688:arm 0x822b0d6c:thumb"
 HOOKS = "0x81b1c958:psn_pad_update 0x81b2a8bc:psn_tree_insert 0x81a7756c:psn_frame_rate 0x817e850e:psn_rtl_mark 0x817e882e:psn_rtl_mark"
 IHOOKS = "0x81a1f284:psn_input_slot 0x81905b10:psn_rtl_align"
+GAME_ADDRS = "psn_vsync_object=0x82474314 psn_frame_step=0x82474334"

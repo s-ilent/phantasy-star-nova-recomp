@@ -5,15 +5,19 @@ DEFAULTS below. Then:
   [versions."<version>"]   one per build of the game the pack plays, in the order a player would meet them: sha256 (of
                            its eboot.bin.elf: vitarecomp import tells a copy's version by it), status (recommended: the
                            one to play; supported: plays) and the settings that differ in that build (HOOKS, IHOOKS,
-                           GAME_ADDRS, FUNCTION_SEEDS, MAIN_BASE...). A copy with no version recorded reads the first one's.
+                           GAME_ADDRS, FUNCTION_SEEDS, MAIN_BASE, ADDR_DATA_DELTA...). A copy with no version recorded
+                           reads the first one's.
   [when.<NAME>]            settings for when the environment has NAME set (not empty), after the version's:
                            KEY = "..." replaces, append.KEY = "..." adds words to it.
   MAIN_BASE                where that build's own main program is linked, when it is not a pack's usual 0x81000000: a
                            dump whose eboot was re-linked (MaiDump's, a release built for a game card) names its base
-                           here, and every address the pack gives for the game itself (HOOKS, IHOOKS, GAME_ADDRS,
-                           FUNCTION_SEEDS) is shifted by the difference. A table may then list another table's
-                           addresses and only its base. The loaded modules' addresses (MOD_HOOKS, MOD_IHOOKS) are never
-                           shifted: those live at 0x88000000 and above, not in the game's own image.
+                           here, and the pack's code addresses (HOOKS, IHOOKS, FUNCTION_SEEDS) are shifted by the
+                           difference. A table may then list another table's addresses and only its base.
+  ADDR_DATA_DELTA          how far that build's data moved from the reference's, for the pack's data addresses
+                           (GAME_ADDRS). A re-link moves code and data by different amounts, so one delta cannot serve
+                           both; a build that only lists MAIN_BASE leaves this 0. The loaded modules' addresses
+                           (MOD_HOOKS, MOD_IHOOKS) are never shifted: those live at 0x88000000 and above, not in the
+                           game's own image.
 VERSIONS, the "<version>=<sha256>:<status> ..." list the rest of the pipeline reads, is made from the version tables.
 `packconf.py --check` reads every pack, version by version, with and without each switch, and checks its shape;
 `packconf.py <pack.toml> [version]` prints the settings, NAME=value a line.
@@ -28,7 +32,7 @@ DEFAULTS = {
     "BASE": "game", "SPLIT": "16", "TEST_INPUT": "", "TEST_TOUCH": "", "TEST_ENV": "", "TEST_FRAMES": "600",
     "TEST_TOLERANCE": "1", "ELF": "eboot.bin.elf", "HOOKS": "", "IHOOKS": "", "MOD_HOOKS": "", "MOD_IHOOKS": "",
     "GAME_ADDRS": "", "TITLE_ID": "", "VERSIONS": "", "UPDATE_NOTE": "", "FUNCTION_SEEDS": "", "ONLINE_VERSIONS": "",
-    "LOCALIZE": "", "MAIN_BASE": "0x81000000",
+    "LOCALIZE": "", "MAIN_BASE": "0x81000000", "ADDR_DATA_DELTA": "0",
 }
 _KEY = re.compile(r"[A-Z][A-Z0-9_]*\Z")
 STATUSES = ("recommended", "supported")
@@ -45,24 +49,35 @@ def _value(path, key, val):
     return str(val)
 
 
-# the settings whose words are addresses in the game's own image: "0x...:name" (HOOKS, IHOOKS, FUNCTION_SEEDS) or
-# "name=0x..." (GAME_ADDRS). MAIN_BASE shifts these; a module's own addresses (MOD_HOOKS, MOD_IHOOKS) are not here.
-_SHIFTED = ("HOOKS", "IHOOKS", "GAME_ADDRS", "FUNCTION_SEEDS")
+# The settings whose words are addresses in the game's own image. A pack's numbers are written against the reference
+# build its pack.toml was made from, and a build that was re-linked elsewhere moves those addresses by two different
+# amounts: MAIN_BASE names where its code is linked, and ADDR_DATA_DELTA how far its data moved relative to the
+# reference's. They differ, because a re-link places the data segment by its own alignment, after code of its own
+# length: Phantasy Star Nova's dumper build has code at +0x1700000 but data at +0x1714000, and translating both with
+# one delta left its 60 fps hook writing another build's address, so the game kept its own 30 fps (2026-11-27).
+# "0x...:name" words (HOOKS, IHOOKS, FUNCTION_SEEDS) are always code, a function's entry. "name=0x..." words
+# (GAME_ADDRS) are data, a lock or a flag the hook's host code uses, unless that one entry says code:name=0x....
+# A module's own addresses (MOD_HOOKS, MOD_IHOOKS) are never shifted: they live in a module's 16 MB slot, not here.
 
 
-def shift_addrs(value, delta):
-    """"addr:name"/"addr:mode" words, or "name=addr" words, with delta added to each address. 0: unchanged."""
-    if not delta:
+def shift_addrs(value, code_delta, data_delta):
+    """Every address in a setting's words, shifted by the delta of its own kind. Both 0: unchanged."""
+    if not code_delta and not data_delta:
         return value
     out = []
     for word in value.split():
-        if "=" in word:                                   # GAME_ADDRS: name=0x...
+        if "=" in word:                                   # GAME_ADDRS: [code:]name=0x...
             name, _, addr = word.partition("=")
-            out.append(f"{name}={int(addr, 0) + delta:#x}")
+            code = name.startswith("code:")
+            out.append(f"{name[5:] if code else name}={int(addr, 0) + (code_delta if code else data_delta):#x}")
         else:                                             # HOOKS, IHOOKS, FUNCTION_SEEDS: 0x...:name
             addr, _, name = word.partition(":")
-            out.append(f"{int(addr, 0) + delta:#x}" + (f":{name}" if name else ""))
+            out.append(f"{int(addr, 0) + code_delta:#x}" + (f":{name}" if name else ""))
     return " ".join(out)
+
+
+CODE_ADDRS = ("HOOKS", "IHOOKS", "FUNCTION_SEEDS")
+DATA_ADDRS = ("GAME_ADDRS",)
 
 
 def read(path):
@@ -106,13 +121,16 @@ def load(path, version="", env=None):
         for k, val in w.items():
             if k == "append": v.update({k2: " ".join(x for x in (v.get(k2, ""), str(add)) if x) for k2, add in val.items()})
             else: v[k] = str(val)
-    # MAIN_BASE: where this build's main program is linked. Its own addresses move with it; the modules' do not.
+    # this build's addresses: MAIN_BASE where its main program is linked (its code's delta), ADDR_DATA_DELTA how far its
+    # data moved. Both are applied here, each to the kind of address it belongs to; the modules' addresses are not.
     try:
-        delta = int(v.get("MAIN_BASE") or 0x81000000, 0) - 0x81000000
+        code_delta = int(v.get("MAIN_BASE") or 0x81000000, 0) - 0x81000000
+        data_delta = int(v.get("ADDR_DATA_DELTA") or 0, 0)
     except ValueError:
-        raise PackError(f"{path}: MAIN_BASE is not a number: {v.get('MAIN_BASE')!r}") from None
-    for k in _SHIFTED:
-        if delta: v[k] = shift_addrs(v.get(k, ""), delta)
+        raise PackError(f"{path}: MAIN_BASE or ADDR_DATA_DELTA is not a number: "
+                        f"{v.get('MAIN_BASE')!r}, {v.get('ADDR_DATA_DELTA')!r}") from None
+    for k in CODE_ADDRS + DATA_ADDRS:
+        v[k] = shift_addrs(v.get(k, ""), code_delta, data_delta)
     return v
 
 

@@ -41,8 +41,16 @@ The pack plays one program from two dumps, which differ only in the address it i
   data (`NOVA_FileList_Vita.cpk`, `_movie.cpk`, `_patch.cpk`, `disc1`) is byte-identical to the originals above. Neither
   dump needs a licence: both eboots are unencrypted wrappers, so `add` decrypts them with no `work.bin`.
 
-`packconf`'s **`MAIN_BASE`** is the whole of the support: the second table lists the `1.05` addresses unchanged and names
-its own base, and `load()` shifts every address the pack gives for the game itself by the difference. The loaded modules'
+`packconf`'s **`MAIN_BASE`** and **`ADDR_DATA_DELTA`** are the support: the second table lists the `1.05` addresses
+unchanged and names where its own program is linked and how far its data moved, and `load()` shifts each of the pack's
+addresses by the delta of its kind -- `HOOKS`/`IHOOKS`/`FUNCTION_SEEDS` are code, `GAME_ADDRS` is data. **The two
+deltas differ**, because a re-link places the data segment by its own alignment and after code of its own length: this
+build is code `+0x1700000` but data `+0x1714000`. One delta for both was the first version of this support and it was
+wrong in a way that hid: `packs/PCSG00351/hooks.c`'s frame-rate hook held `0x82474314`/`0x82474334` as literals, so on
+this build it read a zeroed gap and wrote nowhere, and **enabling 60 fps did nothing** (the player's report,
+2026-11-27). The addresses are now the pack's `GAME_ADDRS`, read through `game_addr()`, and measured from the build
+itself: the cloth/physics step sits at `0x83b88334` here against `0x82474334` in the reference. Verified at 60 in a
+headless GPU run: 30.0 fps where 30 is asked for, 60.0 fps over the last 300 frames where 60 is. The loaded modules'
 addresses (MOD_HOOKS/MOD_IHOOKS) are never shifted, and `vitarecomp` links the main program at `MAIN_BASE` when it
 analyses a module.
 
