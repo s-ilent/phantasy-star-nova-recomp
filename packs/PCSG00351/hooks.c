@@ -107,17 +107,18 @@ static void psn_settings_trace(void) {
 		fprintf(stderr, "    psn settings: rec %#x frame %llu: camLR %u camUD %u bgm %u se %u voice %u movie %u (stale run camLR %u)\n",
 		        rec, (unsigned long long)display_frames(), camLR, camUD, RD32(rec + 0x164), RD32(rec + 0x168),
 		        RD32(rec + 0x16c), RD32(rec + 0x170), stale);
-	if (n != 61) return;
-	{	/* once: every other word in the heap equal to the camera up/down speed */
+	if (n % 600 != 61) return;
+	{	/* repeated through the session: a camera's own copy exists only once a scene with a camera is up */
 		int shown = 0, total = 0;
 		for (uint32_t a = PSN_HEAP_LO; a < PSN_HEAP_HI; a += 4) {
 			if (RD32(a) != camUD) continue;
 			if (a == rec + 0x160) continue;
-			if (RD32(a + 4) == RD32(rec + 0x164) && a >= rec && RD32(a - 4) == camLR) continue;   /* a copy of the whole run */
+			if (a >= rec + 4 && RD32(a + 4) == RD32(rec + 0x164) && RD32(a - 4) == camLR) continue;   /* a copy of the whole run */
 			total++;
-			if (shown++ < 30) fprintf(stderr, "    psn settings: camUD %u also at %#x (before %u after %u)\n", camUD, a, RD32(a - 4), RD32(a + 4));
+			if (shown++ < 3) fprintf(stderr, "    psn settings: camUD %u also at %#x (before %u after %u)\n", camUD, a, RD32(a - 4), RD32(a + 4));
 		}
-		fprintf(stderr, "    psn settings: %d other words in the heap equal camUD %u\n", total, camUD);
+		fprintf(stderr, "    psn settings: scan at frame %llu: %d other words in the heap equal camUD %u\n",
+		        (unsigned long long)display_frames(), total, camUD);
 	}
 }
 
