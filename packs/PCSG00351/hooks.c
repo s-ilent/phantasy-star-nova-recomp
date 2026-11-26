@@ -108,25 +108,40 @@ static void psn_settings_trace(void) {
 		        rec, (unsigned long long)display_frames(), camLR, camUD, RD32(rec + 0x164), RD32(rec + 0x168),
 		        RD32(rec + 0x16c), RD32(rec + 0x170), stale);
 	if (n != 1261 && n != 6001) return;
-	{	/* The record's own address, wherever the game keeps it. A heap address is a unique word, so this finds the stash
-		 * that points at the settings; if one copy of it sits in the data segment then that copy's address is a
-		 * compile-time constant, and its movw/movt halves name every reader of the settings. The value-based scan this
-		 * replaces was useless: one number matched 233 to 507 words. */
+	{	/* Three fingerprints in one pass, because nothing holds the record's own address (that scan found no copy of it
+		 * anywhere in the data segment or the low heap). (a) A float holding the camera up/down speed: if the game turns
+		 * the option into a float for the camera, that copy is a unique word and the place to scale. (b) A word pointing
+		 * a little below the record, the base of the object whose field the record is, which is what the game would hold
+		 * instead. (c) The arena base the game was handed. Any of them in the data segment is a compile-time constant
+		 * whose movw/movt halves name every user of the settings.
+		 * The record itself cannot be scaled: its fields are integers 0..100 (1 and 99 read back as those integers, not as
+		 * floats), so a 30/fps factor quantises, and at 120 Hz the factor 0.25 would round the operator's own 1 to 0. */
 		static const struct { uint32_t lo, hi; const char *what; } where[] = {
 			{ 0x83b80000u, 0x83c3c3a0u, "data" },
 			{ 0x10000000u, 0x28000000u, "heap" },
 		};
-		uint32_t printed = 0, total = 0;
+		uint32_t f99 = 0, near = 0, arena = 0, printed = 0;
 		for (unsigned w = 0; w < sizeof where / sizeof where[0]; w++)
-			for (uint32_t a = where[w].lo; a + 4 <= where[w].hi; a += 4)
-				if (RD32(a) == rec) {
-					total++;
-					if (printed++ < 12)
-						fprintf(stderr, "    psn settings: the record's address is held at %#x (%s) frame %llu\n",
-						        a, where[w].what, (unsigned long long)display_frames());
+			for (uint32_t a = where[w].lo; a + 4 <= where[w].hi; a += 4) {
+				uint32_t v = RD32(a);
+				if (v == 0x42c60000u) {   /* 99.0f */
+					f99++;
+					if (printed++ < 30) fprintf(stderr, "    psn settings: a float %u.0 for the camera up/down speed at %#x (%s) frame %llu\n",
+					                             camUD, a, where[w].what, (unsigned long long)display_frames());
 				}
-		fprintf(stderr, "    psn settings: %u words hold the record's address %#x (frame %llu)\n",
-		        total, rec, (unsigned long long)display_frames());
+				if (v && v <= rec && rec - v < 0x40000u) {
+					near++;
+					if (printed++ < 30) fprintf(stderr, "    psn settings: %#x (%s) points %#x, %#x below the record (frame %llu)\n",
+					                             a, where[w].what, v, rec - v, (unsigned long long)display_frames());
+				}
+				if (v == 0x1031d000u) {
+					arena++;
+					if (printed++ < 30) fprintf(stderr, "    psn settings: ASKA_HEAP's base named at %#x (%s) (frame %llu)\n",
+					                             a, where[w].what, (unsigned long long)display_frames());
+				}
+			}
+		fprintf(stderr, "    psn settings: %u floats for camUD, %u words point below the record, %u name ASKA_HEAP (frame %llu)\n",
+		        f99, near, arena, (unsigned long long)display_frames());
 	}
 }
 
