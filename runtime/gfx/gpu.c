@@ -22,7 +22,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sched.h>   /* sched_yield: the signal wait below, when nothing has completed */
+#include <pthread.h>
+#include <time.h>
+#include <errno.h>   /* ETIMEDOUT: the signal wait's timed wait below */
 #include "hle.h"
 
 static int log_gpu(void) { static int v = -1; if (v < 0) { const char *e = getenv("RECOMP_LOG_GPU"); v = e && *e == '1'; } return v; }
@@ -234,7 +236,19 @@ static void kick_writes(uint32_t recs, uint32_t n) {
 		else fprintf(stderr, "gpu kick: write record %#x %#x %#x not understood\n", ctl, RD32(r + 4), RD32(r + 8));
 	}
 }
-static void signal_bump(void) { __atomic_add_fetch(&signal_counter, 1, __ATOMIC_SEQ_CST); }
+/* The GPU interrupt's condition variable (h_signal_wait): the console's kernel blocks a waiter on it until the
+ * interrupt bumps the counter, so a bump here wakes those waiters. Taken from the renderer's completion paths --
+ * kick, a deferred notification's completion through gfx_kick_done_hook, transfer_submit -- which never wait on
+ * anything themselves, so the order gfx_lock -> sig_m one of them can create is acyclic: a waiter holds no other
+ * host lock while it sleeps (pthread_cond_timedwait drops sig_m). */
+static pthread_mutex_t sig_m = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t sig_cv = PTHREAD_COND_INITIALIZER;
+static void signal_bump(void) {
+	pthread_mutex_lock(&sig_m);
+	__atomic_add_fetch(&signal_counter, 1, __ATOMIC_SEQ_CST);
+	pthread_cond_broadcast(&sig_cv);
+	pthread_mutex_unlock(&sig_m);
+}
 static void kick(Bridge *b) {
 	uint32_t na = RD32(b->in + 0x104), nb = RD32(b->in + 0x108);
 	kick_writes(b->in + 0x140, na < 32 ? na : 32);
@@ -259,7 +273,7 @@ static void kick(Bridge *b) {
  * when in[0x90] is set (+0x84 the record, +0x90 the flag) */
 static void transfer_submit(Bridge *b) {
 	if (RD32(b->in + 0x90)) kick_writes(b->in + 0x84, 1);
-	__atomic_add_fetch(&signal_counter, 1, __ATOMIC_SEQ_CST);
+	signal_bump();   /* a transfer's completion is a GPU interrupt too: it wakes the waiters */
 }
 
 static int bridge(Bridge *b) {
@@ -337,27 +351,52 @@ static void h_bridge(Cpu *c) {   /* PVRSRV_BridgeDispatchKM(id, package) */
 }
 static void h_open(Cpu *c) { RET(1); }      /* PVRSRVOpen: the services connection (a descriptor >= 0) */
 static void h_release(Cpu *c) { RET(0); }   /* PVRSRVRelease */
-/* sceGpuSignalWait(uint32 *last seen, timeout): the kernel sleeps while *last seen == its completion counter,
- * then stores the counter. The host's work completes at the kick, except a scene's notification held back for its
- * visibility counts (kick): those the wait completes first, waiting for the GPU as the console's would.
+/* sceGpuSignalWait(uint32 *last seen, uint32 timeoutUs): under a mutex, while *last seen == its completion counter
+ * the kernel sleeps on the GPU interrupt's condition variable (the interrupt bumps the counter and signals it) with
+ * that timeout, then stores the counter (dev/research/gpumap.py's model of the console's 0x81009050). The host's
+ * work completes at the kick, except a scene's notification held back for its visibility counts (kick): those the
+ * wait completes first, waiting for the GPU as the console's would.
  *
- * Giving the slot up when nothing has completed (2026-11-27). The console's kernel blocks here on the GPU interrupt's
- * condition variable, so a caller looping on this call sleeps until the counter moves -- libgxm polls with it from
- * every `while (*addr != value)` loop (NotificationWait, Finish, ring reuse), taking its word from
- * sceKernelGetTLSAddr(0x44), and ignores the result (dev/research/gpumap.py's model of this call). The host has no
- * such signal and returned at once, so those loops spun: one 45-minute session dispatched 61,163,229 of these calls
- * and 122,326,459 sceKernelGetTLSAddr calls -- 22,000 and 45,000 a second -- while its CRI Server Manager thread's
- * CPU share climbed from 0.3% to 93.5% of a core and its per-frame sleeps collapsed to about 1 ms
- * (docs/psnova/README.md, open question 2). Yielding lets the threads that will advance the counter run. It cannot
- * end a wait the console would have ended: gfx_vis_settle and gxm_finish_poll above have already completed whatever
- * the GPU had, and the counter is stored either way. */
+ * Waiting for real (2026-11-27). libgxm polls with this call from every `while (*addr != value)` loop (NotificationWait,
+ * Finish, ring reuse), taking its word from sceKernelGetTLSAddr(0x44) and ignoring the result, and it passes 100000 us.
+ * With no signal to wait on the host returned at once, so those loops spun: one 45-minute session dispatched 61,163,229
+ * of these calls and 122,326,459 sceKernelGetTLSAddr calls, a 7-minute one 259,662,369 and 519,324,739 -- ~12,700 waits
+ * and ~25,000 lookups per frame, all but two of them from ONE Aska worker, the render thread, whose waits are for the
+ * ring's notification words -- while CRI's Server Manager thread's CPU share climbed from 0.3% to 93.5% of a core and
+ * its per-frame sleeps collapsed to about 1 ms (docs/psnova/README.md, open question 2). Each call also re-ran the
+ * deferred-notification check (taking the renderer lock while one was pending, gfx_vis_settle above) and, under the
+ * scheduler, the spinner held one of the three run slots the whole time -- sched_yield gives the host CPU up, not the
+ * slot -- so the threads that would advance the counter ran on the other two. Blocking on the bump the renderer's
+ * completion signals ends a wait in microseconds, as the console's interrupt did: a held-back notification is written
+ * by the vis_poller thread, which signals here. The caller's timeout bounds a wait nothing is going to end
+ * (RECOMP_GPU_SIGNAL_WAIT_US caps it, default 100000 -- libgxm's own -- 0 for no cap). */
+static uint32_t signal_wait_us(uint32_t timeoutUs) {
+	static long cap = -1;
+	if (cap < 0) { const char *e = getenv("RECOMP_GPU_SIGNAL_WAIT_US"); cap = e && *e ? strtol(e, 0, 0) : 100000; if (cap < 0) cap = 0; }
+	uint32_t us = timeoutUs ? timeoutUs : 100000;   /* 0: nothing to go on, so the value libgxm passes */
+	return cap && us > (uint32_t)cap ? (uint32_t)cap : us;
+}
 static void h_signal_wait(Cpu *c) {
 	extern void gfx_vis_settle(void); gfx_vis_settle();
 	extern void gxm_finish_poll(void); gxm_finish_poll();   /* (a Finish under way: its words checked again, gxm_sony.c) */
 	uint32_t now = __atomic_load_n(&signal_counter, __ATOMIC_SEQ_CST);
 	uint32_t seen = A0 ? RD32(A0) : now;   /* the caller's own value: equal means nothing has completed since it looked */
 	if (A0) WR32(A0, now);
-	if (seen == now) { int b = sched_block_begin(); sched_yield(); if (b) sched_block_end(); }
+	if (seen == now) {   /* nothing has completed: the sleep the console's kernel takes here */
+		uint32_t budget = signal_wait_us(A1);
+		int b = sched_block_begin();   /* the run slot goes before the sleep: the threads that advance the counter run */
+		struct timespec ts; clock_gettime(CLOCK_REALTIME, &ts);
+		ts.tv_sec += budget / 1000000; ts.tv_nsec += (long)(budget % 1000000) * 1000;
+		if (ts.tv_nsec >= 1000000000L) { ts.tv_sec++; ts.tv_nsec -= 1000000000L; }
+		pthread_mutex_lock(&sig_m);
+		uint32_t woke = __atomic_load_n(&signal_counter, __ATOMIC_SEQ_CST);
+		while (woke == now && pthread_cond_timedwait(&sig_cv, &sig_m, &ts) != ETIMEDOUT)
+			woke = __atomic_load_n(&signal_counter, __ATOMIC_SEQ_CST);
+		woke = __atomic_load_n(&signal_counter, __ATOMIC_SEQ_CST);   /* a bump that beat the timeout */
+		pthread_mutex_unlock(&sig_m);
+		if (b) sched_block_end();   /* a slot again: only with no host lock held (kernel.c) */
+		if (A0) WR32(A0, woke);   /* and the counter again, as the console's kernel stores it */
+	}
 	RET(0);
 }
 
