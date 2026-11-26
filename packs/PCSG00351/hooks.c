@@ -43,6 +43,7 @@ void recomp_hook_psn_pad_update(Cpu *c) {
  * the setting every frame, so the F10 menu (or RECOMP_FRAME_RATE / RECOMP_FRAME_RATE_FROM) applies at once. At 30, until
  * a switch, it writes nothing: the game's own code runs untouched.
  */
+static void psn_settings_trace(void);   /* below: the option record, under RECOMP_PSN_SETTINGS_TRACE */
 void recomp_hook_psn_frame_rate(Cpu *c) {
 	(void)c;
 	static int last = 30;
@@ -59,6 +60,7 @@ void recomp_hook_psn_frame_rate(Cpu *c) {
 		if (tr && t0 && n++ % 300 == 0) { uint32_t s = RD32(t0 + 0xb0); float f; memcpy(&f, &s, 4);
 			fprintf(stderr, "    psn clock: frame %llu target %u fps, last frame %u vblanks = %.4f s\n", (unsigned long long)display_frames(), RD32(t0 + 0xcc), RD16(t0 + 0x8c), f); }
 	}
+	psn_settings_trace();
 	if (want == 30 && last == 30) return;
 	const uint32_t t = RD32(obj);
 	if (!t) return;
@@ -77,6 +79,46 @@ void recomp_hook_psn_frame_rate(Cpu *c) {
 	}
 	if (want != last) fprintf(stderr, "    psn frame rate: %d fps (frame %llu)\n", want, (unsigned long long)display_frames());
 	last = want;
+}
+
+/*
+ * The game's option record (2026-11-27). The save log names it: "save system.bin: 384 bytes at 0 from %#x" is the guest
+ * address SceAppUtilSaveDataDataSave hands the runtime, and the record is written verbatim, so the file's offsets are
+ * its offsets. The live run of values is at +0x15c, six 32-bit fields in the order the option screens list them:
+ * camera (left/right) speed, camera (up/down) speed, BGM volume, SE volume, Voice volume, Movie volume (all 0..100).
+ * A stale run sits at +0xa0 and does not follow a change. The camera wants its speed scaled by 30/fps, and the record
+ * is the wrong place for that: the save writes it back to disk, so a runtime write would be saved, and the next start
+ * would divide it again.
+ *
+ * RECOMP_PSN_SETTINGS_TRACE=1 reads the record once a second and, once, scans the game's heap for another word holding
+ * the camera up/down speed. A copy the save never writes would be the safe place to scale; if there is none, the
+ * camera's own read is, and that is what to look for next. RECOMP_PSN_SETTINGS=<hex> overrides the address.
+ */
+#define PSN_HEAP_LO 0x1031d000u   /* ASKA_HEAP, where the record and the game's objects live */
+#define PSN_HEAP_HI 0x1c31d000u
+static void psn_settings_trace(void) {
+	static int on = -1; if (on < 0) on = getenv("RECOMP_PSN_SETTINGS_TRACE") != 0;
+	if (!on) return;
+	static uint32_t rec; static unsigned n;
+	if (!rec) { const char *e = getenv("RECOMP_PSN_SETTINGS"); rec = e && *e ? (uint32_t)strtoul(e, 0, 0) : 0x14bc7f94u; }
+	if (!rec) return;
+	uint32_t camLR = RD32(rec + 0x15c), camUD = RD32(rec + 0x160), stale = RD32(rec + 0xa0);
+	if (n++ % 60 == 0)
+		fprintf(stderr, "    psn settings: rec %#x frame %llu: camLR %u camUD %u bgm %u se %u voice %u movie %u (stale run camLR %u)\n",
+		        rec, (unsigned long long)display_frames(), camLR, camUD, RD32(rec + 0x164), RD32(rec + 0x168),
+		        RD32(rec + 0x16c), RD32(rec + 0x170), stale);
+	if (n != 61) return;
+	{	/* once: every other word in the heap equal to the camera up/down speed */
+		int shown = 0, total = 0;
+		for (uint32_t a = PSN_HEAP_LO; a < PSN_HEAP_HI; a += 4) {
+			if (RD32(a) != camUD) continue;
+			if (a == rec + 0x160) continue;
+			if (RD32(a + 4) == RD32(rec + 0x164) && a >= rec && RD32(a - 4) == camLR) continue;   /* a copy of the whole run */
+			total++;
+			if (shown++ < 30) fprintf(stderr, "    psn settings: camUD %u also at %#x (before %u after %u)\n", camUD, a, RD32(a - 4), RD32(a + 4));
+		}
+		fprintf(stderr, "    psn settings: %d other words in the heap equal camUD %u\n", total, camUD);
+	}
 }
 
 /*
