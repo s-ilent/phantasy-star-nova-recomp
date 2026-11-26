@@ -70,7 +70,7 @@ spec = dict(
           'button body refilled; boxes = the button interior inside its partly transparent edge columns), small tags with a leader dot (yellow 装着/右装着/左装着/装備, cyan ステルス, red '
           '装備不可; opaque gradient body, Japanese inpainted, boxes kept inside the frame). English terms from the '
           'text sheet where the same Japanese exists (カメラ初期化 Camera Reset 430060, 回転 Rotate 430005, 決定 Accept '
-          '430001); 装着 = fitted to a weapon (sheet 780090), R/L = right/left weapon of a twin pair. Glenth has no '
+          '430001); 装着 = fitted to a weapon (sheet 780090), R/L = right/left weapon of a twin pair. The display font has no '
           'degree sign, so 45度 is "45 Deg" in English and «45 درجة» in Arabic (to_display puts a ° on the wrong side of the digits). Written by dev/psnova/uitex/specwork/'
           'make_spec_tex_nova_ui_common.py.'),
     labels=labels,

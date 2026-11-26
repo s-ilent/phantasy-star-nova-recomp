@@ -8,7 +8,7 @@ Japanese drawn as pictures in the game's UI textures (`.aif`) is replaced per la
 - Original textures: `dump/psnova-l10n/scratch/research/patch/<name>.aif` (Sega's 1.05 update copy: the one the game
   uses when it exists) else `dump/psnova-l10n/scratch/research/base/<name>.aif`. Rendered PNGs of every texture:
   `dump/psnova-l10n/scratch/research/uitex/png/{patch,base}/<name>.png` (pixel coordinates = texture coordinates).
-- Fonts (`dev/psnova/fonts.json`): `ui_english` (Glenth, my choice) for English, `ui_arabic` (Segoe UI Bold)
+- Fonts (`dev/psnova/fonts.json`): `ui_english` (the supplied font, my choice) for English, `ui_arabic` (Segoe UI Bold)
   for Arabic; Arabic is shaped and ordered with `dev/psnova/rmdtext/arabic.py` `to_display()` and drawn with Pillow's
   BASIC layout engine (as the encoder does).
 - Format: same 0x1e0-byte header as the message atlases; format byte at 0xa0 (0x12 = DXT3 for all UI textures),

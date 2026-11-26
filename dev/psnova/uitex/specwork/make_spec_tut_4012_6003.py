@@ -17,7 +17,7 @@ Patterns used:
   Arabic is right-aligned (apply_spec flips "left") on single-text rows; label/value rows (a value or Lv. at the
   right of the same row, table cells) keep align_ar "left" so the Arabic does not run into the value.
 - Sizes (finalize): one size per language, capped (English 12, 13 in tall rows; Arabic 10), shrunk only when the
-  width needs it; box_en / box_ar grow 1 / 3 px up and down instead of clipping Glenth's g or Arabic alef/hamza.
+  width needs it; box_en / box_ar grow 1 / 3 px up and down instead of clipping the display font's g or Arabic alef/hamza.
 - ui_tut_6003_0004: the quest text panel is half hidden behind the start dialog. The visible part of each hidden
   line is computed from the same English/Arabic text as ui_tut_6003_0002 (whole words only), so it reads as the
   same text cut off by the dialog.
@@ -385,7 +385,7 @@ specs.append(spec('ui_tut_6003_0004',
 
 # ---------------------------------------------------------------------------------------------------------------
 # font sizes: one size per language and label, capped so equal rows look alike, shrunk only when needed. When the
-# text block is a little taller than the box (Glenth's 'g' / the Arabic alef and hamza), the language's box
+# text block is a little taller than the box (the display font's 'g' / the Arabic alef and hamza), the language's box
 # (box_en / box_ar) grows by up to `grow` px above and below instead of clipping (apply_spec draws inside the box).
 def _fit(lab, lang, cap, grow):
     text = lab.get(lang) or ''

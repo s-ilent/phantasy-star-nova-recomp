@@ -14,7 +14,7 @@ English is on by default and covers the menus, dialogue, UI art and movie subtit
 | Base game | version **1.00** |
 | Update | version **1.05**, the official update for `PCSG00351` |
 | Sony system software | PS Vita **3.74**, the file `PSVUPDAT.PUP` |
-| Font | Glenth Regular, the file `glenthregular.ttf` (see step 1) |
+| Font | any font file you supply, `.ttf` or `.otf` (see step 1) |
 
 Other versions, other title IDs, and games that already carry a fan translation are not supported. Setup checks the original game archives, and it tells you if one has been changed. Use the unmodified base game and update.
 
@@ -27,11 +27,11 @@ Other versions, other title IDs, and games that already carry a fan translation 
   - **One ZIP file** that holds both PKG files. Make it with Windows ("Send to > Compressed (zipped) folder"), 7-Zip or similar, with the default Store or Deflate compression and **no password**. Other files in the ZIP, and add-on (DLC) packages, are ignored.
 - Your game's **license**: the `work.bin` (or a `.rif`) for *Phantasy Star Nova*. Most PKG files do not carry one. If the base-game PKG already has a license inside it, setup uses that and you can leave the field empty.
 - **Vita system software 3.74** as `PSVUPDAT.PUP`. Setup uses it to prepare five system modules the game needs. [PlayStation's download page](https://www.playstation.com/en-us/support/hardware/psvita/system-software/)
-- The **Glenth Regular** font. See step 1.
+- A **font file** (`.ttf` or `.otf`) to draw the English with. See step 1.
 
 ## Setup
 
-1. **Add the font.** This release does not include Glenth Regular by OWPictures, which draws the English text. Get your own copy of the font from [its publisher](https://elements.envato.com/glenth-classic-display-serif-font-9ZK6SWW) under a license that covers your use, and keep the license it comes with. Then either copy the TrueType file `glenthregular.ttf` into the `localization\fonts` folder of this release, or choose it in the setup window. If `localization\fonts` already contains `glenthregular.ttf`, skip this step.
+1. **Add a font.** This release includes no font and names none: the English text, UI art and movie subtitles are drawn with a font you supply. Copy any `.ttf` or `.otf` into the `localization\fonts` folder of this release, or choose one in the setup window. Its own metrics decide the spacing, so a wider or taller font may crowd a box.
 2. **Extract** the whole release to a folder you can write to, such as `C:\Games\Phantasy Star Nova`. Do not run setup from inside the zip.
 3. Open **Setup Phantasy Star Nova.exe**.
 4. Choose your game files (see the table below), your **Game license**, and `PSVUPDAT.PUP`. If you did not copy the font in step 1, choose it too.
@@ -116,7 +116,7 @@ Setup keeps your **previous build** as well as the current one. If a new build m
 
 If update checks are off ("Update checks are off in this release"), the release you have does not point at a feed yet. Everything else works the same.
 
-An update that only changes English text or movies needs your **font** again to rebuild it. If Setup cannot find it, it says so and leaves the installed game alone: choose Glenth Regular in the Font field and click **Install update** again. If your installed build was made by an earlier version of Setup, run **Build and install** once with your game files first; after that, updates reuse your build.
+An update that only changes English text or movies needs your **font** again to rebuild it. If Setup cannot find it, it says so and leaves the installed game alone: choose your font file in the Font field and click **Install update** again. If your installed build was made by an earlier version of Setup, run **Build and install** once with your game files first; after that, updates reuse your build.
 
 ## If the game or setup has a problem: support reports
 
@@ -143,13 +143,13 @@ From a command prompt: `"Setup Phantasy Star Nova.exe" --export-report`.
 | It cannot find the base game or the update in a folder (command line) | Choose the folder that contains `app\PCSG00351` and `patch\PCSG00351`, or choose the two folders separately. |
 | Required files are missing or empty (folders) | Copy the listed files from your dump into the matching folder, then run setup again. |
 | The firmware is not the supported file | Download `PSVUPDAT.PUP` for system software 3.74 from the PlayStation page above. |
-| It needs Glenth Regular | See step 1. |
+| It needs a font | See step 1. |
 | Not enough free space | Free up space on the release drive and run setup again. |
 | The update needs more free space | An update makes a second build before it switches. Free up the space it names. Nothing was downloaded and your build is untouched. |
 | Close Phantasy Star Nova, then try again | An update or roll back only runs while the game is closed. |
 | The update does not match the signed manifest, or its signature does not match | The download was damaged or changed. It was deleted and nothing was installed. Try again later; if it keeps happening, do not install it and send a support report. |
 | The installed build was made before build records were kept | Run **Build and install** once with your game files. After that, updates reuse your build. |
-| The English text font was not found | Choose Glenth Regular in the Font field (or copy it to `localization\fonts`), then click **Install update** again. |
+| The English text font was not found | Choose your font file in the Font field (or copy one to `localization\fonts`), then click **Install update** again. |
 | The new build is ready, but the game is running | Close the game and run setup again to switch to it. |
 | A stage failed | The message names the log. **Open setup logs** shows the folder. |
 

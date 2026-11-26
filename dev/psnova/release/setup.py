@@ -32,12 +32,18 @@ BRIDGE = ENGINE / "release/Play Nova.exe"
 GAME_EXE = ROOT / "Phantasy Star Nova.exe"
 FFMPEG = ENGINE / "release/ffmpeg.exe"
 ENGINE_SOURCES = U.ENGINE_DIRS
-FONT_NAME = "glenthregular.ttf"
-DEFAULT_FONT = LOCALIZATION / "fonts" / FONT_NAME
+FONT_SUFFIXES = (".ttf", ".otf")
+
+
+def first_font():
+    """The font to draw the English with when none is chosen: the first font file in localization/fonts. No font ships
+    with this project and none is named, so this is whatever the player put there."""
+    found = sorted(p for p in (LOCALIZATION / "fonts").glob("*") if p.suffix.lower() in FONT_SUFFIXES)
+    return found[0] if found else LOCALIZATION / "fonts" / "font.ttf"
+
+
+DEFAULT_FONT = first_font()
 FALLBACK_FONT = Path(os.environ.get("WINDIR", r"C:\Windows")) / "Fonts" / "segoeuib.ttf"   # the text builder's fallback (build_text.py)
-# The Glenth Regular 1.004 TrueType file the English text, UI art and subtitles were built and checked with.
-FONT_SHA256 = "eb9bf6e6c482e82307a6b505c58a3e70499c137dfddb98c7a53fc404d3745e0f"
-FONT_URL = "https://elements.envato.com/glenth-classic-display-serif-font-9ZK6SWW"
 SONY_FIRMWARE = "https://www.playstation.com/en-us/support/hardware/psvita/system-software/"
 PUP_SHA256 = "6ef6dc8da6db026f28647713e473486d770087a605c52a8d751bfca7478386cf"
 BASE = "NOVA_FileList_Vita.cpk"
@@ -542,17 +548,15 @@ def active_context():
 
 
 def check_font(font):
+    """The font to draw the English with. Yours: the builders take any font file, its own metrics deciding the spacing."""
     if not font.is_file():
-        raise SetupError(f"The English text font was not found:\n{font}\n\nChoose Glenth Regular ({FONT_NAME}) in the Font field "
-                         f"of Setup, or copy it to:\n{DEFAULT_FONT}\nGet your own licensed copy: {FONT_URL}\n"
-                         "The installed game is untouched.")
+        raise SetupError(f"The English text font was not found:\n{font}\n\nChoose a font file in the Font field of "
+                         f"Setup, or copy one to:\n{DEFAULT_FONT}\nThe installed game is untouched.")
     from PIL import ImageFont
     try:
         family, style = ImageFont.truetype(str(font), 18).getname()
     except OSError as error:
         raise SetupError(f"The selected font cannot be opened: {font}") from error
-    if family.lower() != "glenth":
-        raise SetupError(f"{font} is the font {family} {style}, not Glenth Regular. Choose {FONT_NAME}.\n{FONT_URL}")
     return family, style
 
 
@@ -582,10 +586,9 @@ def prepare_install(args, report, attempt):
     font = args.font.resolve() if args.font else DEFAULT_FONT
     if not font.is_file():
         which = f"The selected font file was not found:\n{font}" if args.font else (
-            f"This release does not include the Glenth Regular font ({FONT_NAME}).")
-        raise SetupError(f"{which}\n\nSetup uses Glenth Regular by OWPictures for the English text, UI art and movie "
-                         f"subtitles. Get your own licensed copy:\n{FONT_URL}\nThen either choose {FONT_NAME} in the "
-                         f"Font field, or copy it to:\n{DEFAULT_FONT}")
+            "This release does not include a font, and none is named.")
+        raise SetupError(f"{which}\n\nSetup draws the English text, UI art and movie subtitles with a font you supply: "
+                         f"choose any .ttf or .otf in the Font field, or copy one to:\n{DEFAULT_FONT}")
     required = [PYTHON, ENGINE / "pipeline/vitarecomp.py", ENGINE / "version.txt", firmware, font, FALLBACK_FONT]
     required.extend((BRIDGE, FFMPEG, LOCALIZATION / "build_text.py", LOCALIZATION / "build_movies.py"))
     check_paths(required)
@@ -595,9 +598,7 @@ def prepare_install(args, report, attempt):
                          + SONY_FIRMWARE)
     family, style = check_font(font)
     font_sha = digest(font)
-    if font_sha != FONT_SHA256:
-        report(f"Note: this {family} {style} file is not the Glenth Regular 1.004 TrueType file the English layout was "
-               "checked with. Setup will continue, but text spacing may differ slightly.")
+    report(f"Drawing the English with {font.name} ({family} {style}).")
 
     attempt.stage("fingerprinting the inputs")
     inputs = hashlib.sha256()
@@ -801,7 +802,7 @@ def export_report():
 class Backend:
     """What the setup window calls."""
     root, data, game_exe = ROOT, DATA, GAME_EXE
-    sony_firmware, font_url = SONY_FIRMWARE, FONT_URL
+    sony_firmware = SONY_FIRMWARE
     setup_error = SetupError
     install = staticmethod(install)
     install_update = staticmethod(install_update)
@@ -819,7 +820,7 @@ def main():
                         "is a ZIP with both packages or a folder that has patch\\PCSG00351")
     parser.add_argument("--license", type=Path, help="the game's work.bin or .rif, when the PKG has no license inside it")
     parser.add_argument("--firmware", type=Path, help="Sony's Vita system software 3.74 file (PSVUPDAT.PUP)")
-    parser.add_argument("--font", type=Path, help="Glenth Regular, when it is not in localization\\fonts")
+    parser.add_argument("--font", type=Path, help="a .ttf or .otf to draw the English with, when none is in localization\\fonts")
     parser.add_argument("--export-report", action="store_true", help="write a support report ZIP under NovaData\\Reports")
     parser.add_argument("--check-updates", action="store_true", help="ask the update feed (at most once a day unless --force)")
     parser.add_argument("--force", action="store_true", help="with --check-updates: ask now")

@@ -109,15 +109,11 @@ def show(backend):
     path_row(3, "update", "Update PKG (optional)", [("Update package", "*.pkg"), ("All files", "*.*")])
     path_row(4, "license", "Game license (if required)", [("Game license", "*.rif work.bin"), ("All files", "*.*")])
     path_row(5, "firmware", "Vita firmware 3.74", [("Vita update", "*.pup"), ("All files", "*.*")])
-    font_included = (root / "localization/fonts/glenthregular.ttf").is_file()
-    font_label = "Font (optional override)" if font_included else "Glenth Regular font"
-    path_row(6, "font", font_label, [("Fonts", "*.ttf *.otf"), ("All files", "*.*")])
+    path_row(6, "font", "Font file (.ttf or .otf)", [("Fonts", "*.ttf *.otf"), ("All files", "*.*")])
 
     buttons = ttk.Frame(panel)
     buttons.grid(row=7, columnspan=3, sticky="ew", pady=(10, 6))
     ttk.Button(buttons, text="Get firmware from Sony", command=lambda: webbrowser.open(backend.sony_firmware)).pack(side="left")
-    if not font_included:
-        ttk.Button(buttons, text="Get Glenth font", command=lambda: webbrowser.open(backend.font_url)).pack(side="left", padx=(8, 0))
     ttk.Button(buttons, text="Open setup logs", command=lambda: os.startfile(os.environ.get("NOVA_SETUP_LOGS", str(root)))).pack(
         side="left", padx=8)
     export_button = ttk.Button(buttons, text="Export support report")

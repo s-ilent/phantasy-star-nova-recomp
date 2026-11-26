@@ -10,7 +10,7 @@ English wording by me, including "Planet Wakua."
 | 19.90–22.00 s | Begin deployment of the first exploration team. | `deployment.png` |
 | 22.00–24.50 s | Initiate the descent sequence. | `descent.png` |
 
-The English movie build takes its cue text and times from `dev/psnova/subs/OpeningDemo.json`. The renderer uses the existing proportional Glenth font at 28 px and centers the cues at y=496 on the 960 × 544 frames. The first cue spans two lines below the game's cyan lettering. The story-movie workflow still uses the frame and mask tables from subtitle detection.
+The English movie build takes its cue text and times from `dev/psnova/subs/OpeningDemo.json`. The renderer uses the existing proportional font at 28 px and centers the cues at y=496 on the 960 × 544 frames. The first cue spans two lines below the game's cyan lettering. The story-movie workflow still uses the frame and mask tables from subtitle detection.
 
 ## Installation and verification
 

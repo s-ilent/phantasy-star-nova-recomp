@@ -38,7 +38,7 @@ that you start the game with a double-click.
 | [1. Download the project](#1-download-the-project) | Gets the code and its Python packages | 2 min |
 | [2. Install the build tools](#2-install-the-build-tools) | Downloads the compiler and libraries | 5–30 min |
 | [3. Add the Vita system software](#3-add-the-vita-system-software) | Takes the modules the game needs from Sony's firmware file | 1 min |
-| [4. Add the English font](#4-add-the-english-font) | Lets setup build the English version | 1 min |
+| [4. The English font](#4-the-english-font) | A font ships with the project; use your own if you like | 1 min |
 | [5. Add your game](#5-add-your-game) | Builds the Windows game and its English | 30 min |
 | [6. Play](#6-play) | | |
 
@@ -57,9 +57,8 @@ Get these ready. Everything else is downloaded for you.
   `sce_sys\package\`.
 - [ ] **The Vita system software:** `PSVUPDAT.PUP` version 3.74, from
   [PlayStation's download page](https://www.playstation.com/en-us/support/hardware/psvita/system-software/).
-- [ ] **For English:** your own copy of the font
-  [Glenth Regular](https://elements.envato.com/glenth-classic-display-serif-font-9ZK6SWW) (`glenthregular.ttf`). It
-  is not free to share, so it can't be included. Without it you get the game in Japanese.
+- [ ] **For English:** nothing extra. A font, **K2D Medium** under the SIL Open Font License, ships with the project
+  and draws the English. To use your own instead, drop a `.ttf` or `.otf` into `packs\PCSG00351\english\fonts\`.
 
 Other regions and versions don't work. A copy that already has a fan translation works: setup removes the fan
 translation and puts this English in its place, with a few limits (see [English](#english)).
@@ -120,10 +119,14 @@ Back in PowerShell, with the path of your `PSVUPDAT.PUP`:
 
 **It worked if** the last line starts with `firmware 3.74`.
 
-### 4. Add the English font
+### 4. The English font
 
-Copy your `glenthregular.ttf` into the project's `packs\PCSG00351\english\fonts\` folder. It stays on your PC: git
-never uploads fonts from there.
+**You can skip this step.** K2D Medium, under the SIL Open Font License, ships in
+`packs\PCSG00351\english\fonts\` and draws the English.
+
+To draw it with a font of your own, copy any `.ttf` or `.otf` into that folder: a font you put there is used in the
+default's place. It stays on your PC — git never uploads fonts from there, and the project's default is the only font
+it commits. The font's own spacing decides the layout, so a wider one may crowd a box.
 
 Skip this step if you want the game in Japanese.
 
@@ -140,8 +143,8 @@ Run the first command with your base game and its licence file, then the second 
 ```
 
 The first takes a minute. The second builds the game (about 15 minutes), then the English (about 15 minutes), and
-prints a lot as it goes. **It worked if** it ends with a line starting `English localization ready`. Without the
-font, it ends with a message about the font instead, and the game is built in Japanese.
+prints a lot as it goes. **It worked if** it ends with a line starting `English localization ready`. If the English
+could not be built, it says why instead, and the game is built in Japanese.
 
 Your game files are only read, never changed.
 
@@ -162,7 +165,7 @@ is expected. A step has worked if it ends without an error message.
 </details>
 
 <details>
-<summary>You added the font later, or the English stopped</summary>
+<summary>You changed the font later, or the English stopped</summary>
 
 Build only the English (about 15 minutes):
 
@@ -253,7 +256,7 @@ Japanese copy.
 | `Building wheel for capstone … did not run successfully` or `'cmake' is not recognized` in step 1 | Your Python is 32-bit or ARM64. Install Python with the **Windows installer (64-bit)**, delete the `.venv` folder and run step 1 again. `py -0p` lists the Pythons you have: a 32-bit one shows `-32`. |
 | `Python not found` when starting the game | Create `.venv` as in step 1. |
 | The update is refused or asks for a licence | Add the base game first (step 5), with its `work.bin` or `.rif`. |
-| `English localization: … needs the Glenth Regular font` | Copy `glenthregular.ttf` into `packs\PCSG00351\english\fonts\` (step 4), then run `vitarecomp localize PCSG00351`. |
+| `English localization: The English text needs a font` | Restore `K2D-Medium.ttf` in `packs\PCSG00351\english\fonts\`, or put another font there (step 4), then run `vitarecomp localize PCSG00351`. |
 | `English localization: this copy carries a fan translation` | Expected with a fan-translated copy: the fan translation is removed and this English applied, with the limits the message lists. For the full result, add an unmodified copy (step 5). |
 | `… is not the original Japanese base game archive` | The base game itself is modified. Add an unmodified copy (step 5). |
 | The game is in Japanese after setup | Check the end of step 5's output for a line starting `English localization`, which says what stopped it. |
@@ -309,5 +312,6 @@ Built on [Project Nativ](https://github.com/TheLostPantheon/nativ). To support N
 [Ko-fi](https://ko-fi.com/kingtorro).
 
 The English text started from Arks-Layer's fan translation of *Phantasy Star Nova* and was revised and extended for
-this project. Glenth Regular is by OWPictures. The movie subtitles are encoded with
+this project. The English lettering is drawn with K2D Medium (SIL Open Font License), which the project ships, or with
+a font the player supplies in its place. The movie subtitles are encoded with
 [FFmpeg](https://ffmpeg.org/), using Gyan Doshi's Windows build.

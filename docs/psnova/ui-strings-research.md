@@ -95,7 +95,7 @@ Question: with English/Arabic selected, why does Japanese still show, e.g. the c
 - **No message file contains 0x8093**: control codes counted in all jp_base, jp_patch and en_patch files: only 0x8081,
   0x8082, 0x8094 (14), 0x8099. So these names are not drawn by any shipped message. Low priority.
 - If they ever matter: writing ASCII English into the overlay's `uireferenceparameter.csv` works (the converter passes
-  ASCII, the map has A-Z a-z), but it would draw in the game's own BasicCharSet letters (not Glenth), at most 31
+  ASCII, the map has A-Z a-z), but it would draw in the game's own BasicCharSet letters (not the supplied font), at most 31
   characters; Arabic cannot go this way without a hook (e.g. replace the UTF-16 path by rendering a picture).
 
 ### NpcBaseParameter.csv: the name on screen is a message id
@@ -141,11 +141,11 @@ hook. Steps:
    text, ~20 px rows (English: "Move part", "Enlarge part", "Move part (fine)", "Rotate part 45°", "Collect all",
    "Reset camera", "Zoom", "Rotate weapon", "Rotate"; Arabic: shaped, right-to-left pictures; the strip is already
    right-aligned, so Arabic fits naturally). Title banners: 20 px rows; for English the small English sub-title is
-   already there, so the big row could say the same in Glenth or keep a short form.
+   already there, so the big row could say the same in the supplied font or keep a short form.
 3. Re-encode only the 4x4 blocks that changed (DXT5 encoder: alpha endpoints + colour endpoints per block); copy every
    other block byte for byte, and keep the 0x1e0 header unchanged (same texture ID at 0x91-0x93 - only one version is
    in each language's archive, so the game's texture cache is not confused).
-4. Fonts from `dev/psnova/fonts.json` (game_english Glenth may be too thin for the bold guide; a bold font may read
+4. Fonts from `dev/psnova/fonts.json` (game_english may be too thin for the bold guide; a bold font may read
    better; check in game).
 
 Also worth doing in the same pass: the other labels in `tex_nova_ui_common.aif` (touch labels, equip labels) and the

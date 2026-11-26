@@ -147,7 +147,7 @@ def main():
     parser.add_argument('base', type=Path, help='original NOVA_FileList_Vita.cpk from the base game')
     parser.add_argument('update', type=Path, help='original NOVA_FileList_Vita_patch.cpk from the 1.05 update')
     parser.add_argument('output', type=Path, help='destination for the English patch CPK')
-    parser.add_argument('--font', type=Path, required=True, help='Glenth Regular font file')
+    parser.add_argument('--font', type=Path, required=True, help='the font file to draw the text with')
     parser.add_argument('--allow-missing-textures', action='store_true',
                         help='an update archive restored from a fan translation: skip UI textures it no longer has')
     args = parser.parse_args()

@@ -1,11 +1,11 @@
 {
   "_about": "The fonts of the English/Arabic localization (2026-11-19). Paths are relative to the project folder. Change a file or size here, then rebuild: dev/psnova/rebuild_l10n.sh text (in-game text), subs (movie subtitles), warning (boot notice) or all. docs/psnova/fonts.md explains each entry.",
   "game_arabic":  {"file": "tools/fonts/segoeuib.ttf",    "size": 16, "baseline": 16, "note": "Arabic in menus, dialogue boxes, help: drawn as glyph pictures into each message file (21-px rows)"},
-  "game_english": {"file": "Glenth/glenthregular.ttf",    "size": 18, "baseline": 16, "fallback": "[]~<>®©™", "note": "English letters drawn as glyph pictures instead of the game's own fixed-width letters; null = the game's font. Characters the font lacks keep the game's font."},
-  "subs_english": {"file": "Glenth/glenthregular.ttf",    "size": 28, "note": "burned-in movie subtitles"},
+  "game_english": {"file": "packs/PCSG00351/english/fonts/K2D-Medium.ttf",    "size": 18, "baseline": 16, "fallback": "[]~<>®©™", "note": "English letters drawn as glyph pictures instead of the game's own fixed-width letters; null = the game's font. Characters the font lacks keep the game's font."},
+  "subs_english": {"file": "packs/PCSG00351/english/fonts/K2D-Medium.ttf",    "size": 28, "note": "burned-in movie subtitles"},
   "subs_arabic":  {"file": "tools/fonts/segoeuib.ttf",    "size": 24},
-  "warning_english": {"file": "Glenth/glenthregular.ttf", "note": "the boot notice (Attention.mp4) redraw"},
+  "warning_english": {"file": "packs/PCSG00351/english/fonts/K2D-Medium.ttf", "note": "the boot notice (Attention.mp4) redraw"},
   "warning_arabic":  {"file": "tools/fonts/segoeui.ttf"},
-  "ui_english": {"file": "Glenth/glenthregular.ttf", "note": "labels redrawn into UI textures (.aif): menu banners, button guide, chapter cards, tutorial pictures (my choice: Glenth, 2026-11-19)"},
+  "ui_english": {"file": "packs/PCSG00351/english/fonts/K2D-Medium.ttf", "note": "labels redrawn into UI textures (.aif): menu banners, button guide, chapter cards, tutorial pictures"},
   "ui_arabic":  {"file": "tools/fonts/segoeuib.ttf"}
 }

@@ -19,8 +19,8 @@ The game's own files are only read. The runtime swaps in a file from lang/<code>
 "Original" there still plays the Japanese game. Nothing of the game is in this folder: the recipes hold English text,
 drawing instructions and the SHA-256 of each original file they apply to.
 
-The text and subtitles are drawn with Glenth Regular, which is not redistributable: put your copy at
-fonts/glenthregular.ttf, or pass --font.
+The text and subtitles are drawn with a font: the project ships a default (K2D Medium, SIL OFL), and a font you put in
+fonts/ yourself is used in its place. --font or RECOMP_ENGLISH_FONT names another; its own metrics decide the spacing.
 
 Usage: localize.py <library title folder> [--font F] [--ffmpeg F] [--force]
 """
@@ -36,11 +36,32 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[2]
-FONT_NAME = 'glenthregular.ttf'
-DEFAULT_FONT = HERE / 'fonts' / FONT_NAME
-FONT_URL = 'https://elements.envato.com/glenth-classic-display-serif-font-9ZK6SWW'
-# the Glenth Regular 1.004 TrueType file the English layout was checked with; another Glenth build works, spacing may differ
-FONT_SHA256 = 'eb9bf6e6c482e82307a6b505c58a3e70499c137dfddb98c7a53fc404d3745e0f'
+# A font ships with the project as the default (K2D Medium, SIL OFL, fonts/OFL-K2D.txt), so the English builds with
+# nothing of your own. A font you put in fonts/ yourself is used in its place, and --font or RECOMP_ENGLISH_FONT names
+# another still. Any font the builders can open works: its own metrics decide the spacing, and text/english_layout.py
+# judges the result.
+FONT_DIR = HERE / 'fonts'
+FONT_DEFAULT = 'K2D-Medium.ttf'
+FONT_SUFFIXES = ('.ttf', '.otf')
+
+
+def font_files():
+    """Every font in fonts/, in a stable order (two runs pick the same one)."""
+    return sorted(p for p in FONT_DIR.iterdir() if p.suffix.lower() in FONT_SUFFIXES) if FONT_DIR.is_dir() else []
+
+
+def default_font():
+    """RECOMP_ENGLISH_FONT, else a font of your own in fonts/ (any font there that is not the shipped default), else the
+    shipped default. The path returned is named in full only by the message that asks for one."""
+    named = os.environ.get('RECOMP_ENGLISH_FONT')
+    if named:
+        p = Path(named)
+        return p if p.is_file() else FONT_DIR / named
+    files = font_files()
+    return ([p for p in files if p.name != FONT_DEFAULT] or files or [FONT_DIR / FONT_DEFAULT])[0]
+
+
+DEFAULT_FONT = default_font()
 
 BASE, MOVIE, PATCH = 'NOVA_FileList_Vita.cpk', 'NOVA_FileList_Vita_movie.cpk', 'NOVA_FileList_Vita_patch.cpk'
 # the unmodified Japanese 1.00 game and 1.05 update archives the recipes were made from
@@ -87,21 +108,19 @@ def check_originals(title):
 
 
 def check_font(font):
+    """The file to draw the English with, or Stop. The project ships a default (SIL OFL) and any other font works too,
+    used as it comes: its own metrics decide the spacing, and text/english_layout.py checks the built text."""
     if not font.is_file():
-        raise Stop(f'The English text needs the Glenth Regular font, which is not part of this repository.\n'
-                   f'Get your own licensed copy ({FONT_URL}) and copy {FONT_NAME} to\n  {DEFAULT_FONT}\n'
-                   f'or pass --font, then run: vitarecomp localize PCSG00351')
+        raise Stop(f'The English text needs a font: {FONT_DIR} has none of its own, and the default ({FONT_DEFAULT})\n'
+                   f'is missing from it too. Restore that file, put a font in {FONT_DIR}, or name one with --font or\n'
+                   f'RECOMP_ENGLISH_FONT, then run: vitarecomp localize PCSG00351')
     from PIL import ImageFont
     try:
         family, style = ImageFont.truetype(str(font), 18).getname()
     except OSError as error:
         raise Stop(f'{font} cannot be opened as a font') from error
-    if family.lower() != 'glenth':
-        raise Stop(f'{font} is {family} {style}, not Glenth Regular ({FONT_URL})')
     digest = file_hash(font)
-    if digest != FONT_SHA256:
-        print(f'Note: {font.name} is not the Glenth Regular 1.004 file the English layout was checked with; '
-              'text spacing may differ slightly.', flush=True)
+    print(f'Drawing the English with {font.name} ({family} {style}).', flush=True)
     return digest
 
 
@@ -206,7 +225,7 @@ def localize(title, font, ffmpeg, force):
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('title', type=Path, help='the library folder of the game: <library>/decrypted/PCSG00351')
-    parser.add_argument('--font', type=Path, help=f'Glenth Regular (default: {DEFAULT_FONT})')
+    parser.add_argument('--font', type=Path, help=f'the font to draw the English with (default: {DEFAULT_FONT})')
     parser.add_argument('--ffmpeg', type=Path, help='an FFmpeg program with libx264 (default: toolchain/ffmpeg-cli)')
     parser.add_argument('--force', action='store_true', help='replace an English overlay this script did not build')
     args = parser.parse_args()

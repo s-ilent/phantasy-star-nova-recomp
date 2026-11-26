@@ -34,7 +34,7 @@ than the picture picks up the neighbour's edge (the streaks). Cause of the offse
 
 ## 3. Other text faults
 
-- A missing-glyph box between "PlayStation" and "Vita" (recording 9 at 0:56): the ® / ™ sign is not in Glenth, and is
+- A missing-glyph box between "PlayStation" and "Vita" (recording 9 at 0:56): the ® / ™ sign is not in the supplied font, and is
   not in the fallback list ("[]~<>").
 - Chapter card "The Battle for Survival Begins" (my screenshot): the blurred Japanese title glow still shows above the
   English line (the glow layer is a separate sprite or texture from the word pieces made transparent).

@@ -542,51 +542,51 @@ the English or the Japanese.)
   Arabic quest banners and objectives in the arena; the story dialogue the fan patch had translated shows in English
   (no Arabic for it yet); nothing broken seen.
 
-## English font replaced with Glenth (2026-11-19 ~12:00, me: "use the fonts in the folder Glenth to replace the English fonts")
+## English font replaced with the supplied display font (2026-11-19 ~12:00, me: "use the fonts in the folder to replace the English fonts")
 
-My font `Glenth/glenthregular.ttf` (also glenth.otf; a thin serif display font, no `~ < >`) now draws all English:
+My font (a thin serif display font, no `~ < >`) now draws all English:
 in-game text (new: the encoder draws each English character as a glyph picture, 18 px, baseline 16; before, the game's
 own fixed-width letters were used), the movie subtitles (28 px) and the warning screen (heading "Notice"). All fonts are
 now set in one file, dev/psnova/fonts.json; how-to and limits in docs/psnova/fonts.md. Rebuilt and installed 12:15:
 lang/en and lang/ar text archives (English rows in both), lang/en movie archive. Old Segoe English warning kept as
 movies_l10n/Attention_en_segoe.mp4.
-**Test 9** (English, arena route to 24,000; shots dump/psnova-l10n/ingame_text9/, zoom z_glenth.png): Glenth in the warning
+**Test 9** (English, arena route to 24,000; shots dump/psnova-l10n/ingame_text9/): the display font in the warning
 screen, the movie subtitles, every menu row, the race/class lists and help boxes, Yes/No dialogs, dialogue boxes and
 name plates, and the arena quest banner; readable at the game's size; nothing broken seen.
 
 ## My screenshots 2026-11-19 ~12:30-13:10: Japanese still visible, tutorial pages cut off
 
 - **Tutorial pages cut off mid-sentence** ("Combine normal attacks a", "While you hold"): the game lays out at most 128
-  glyphs per message, and since English letters became one Glenth picture each, every letter and space counted (595
+  glyphs per message, and since English letters became one picture each, every letter and space counted (595
   English and 44 Arabic messages were over 128, up to 288; `dev/psnova/rmdtext/count_glyphs.py`). Fix: English is now
   drawn as one picture per word with its trailing spaces (encode_text.py `_latin_words`), and the writer can use larger
   atlases (256x256, 512x256, 512x512): `rmdwrite.template_gxm` derives the size fields (u16 W/H at 0xa8/0xaa, W/4 and
   H/4 at 0xb2/0xb4, pitch W*4 at 0xb8, W*H at 0xbc/0x150/0x1a0, W*H+0xf0 at 0xf4), checked against the game's own
   1024x512 / 1024x1024 UI textures, which differ from the 256x128 template in nothing else. Now 0 messages over 128
   (a 294-character tutorial page = 40 pictures on a 256x256 atlas). The larger atlases are NOT yet seen in the game.
-- **Brackets as "l...l"** in English titles: Glenth's [ ] are thin bars; fonts.json game_english "fallback": "[]~<>"
+- **Brackets as "l...l"** in English titles: the display font's [ ] are thin bars; fonts.json game_english "fallback": "[]~<>"
   keeps the game's own letters for these.
 - **Names in Japanese** (ルティナ / フィルディア over characters, in the party HUD and in the portrait message window): they
   are Shift-JIS table strings, not messages: `uireferenceparameter.csv` StringFix_Name* (15 names) and
   `NpcBaseParameter.csv` column 27 (22 character rows). `dev/psnova/rmdtext/make_name_tables.py` writes copies with the
   English names (ASCII, still Shift-JIS) into dump/psnova-l10n/name_tables/; `build_l10n.py --extra-dir` puts them into the
   archive. Both languages get the English names there (that table path has no Arabic letters; they draw in the game's
-  own font, not Glenth). Not yet seen in the game.
+  own font, not the display font). Not yet seen in the game.
 - **Japanese drawn inside pictures** (UI textures, research docs/psnova/ui-textures-research.md and ui-strings-research.md):
   menu banners (キャラクタークリエイト, 設定/ヘルプ: tex_nova_ui_Title.aif), the button guide (カメラ初期化, ズーム:
   tex_nova_ui_common.aif), chapter title cards (「惑星の洗礼」: tex_Chapter.aif), the title screen and a few more (9 core
   textures), plus 83 tutorial screenshots (ソード, パルチザン, 素手, メインパレット, the settings screen...). Not started:
-  I was asked which font to use for pictures (I declined adding Glenth for UI pictures to fonts.json for now).
+  I was asked which font to use for pictures (I declined adding a UI picture font to fonts.json for now).
 - Installed 13:08: lang/ar text archive (word pictures + larger atlases + name tables); lang/en installed after I closed
   the game (rebuilt with build_l10n.py --extra-dir dump/psnova-l10n/name_tables). Earlier note: lang/en could not be replaced
   while my game_host.exe was running; rebuilding it (dump/psnova-l10n/build/en8) to install after the game closes.
 
-## Japanese inside pictures redrawn (2026-11-19 ~13:30-15:30, me: "Glenth")
+## Japanese inside pictures redrawn (2026-11-19 ~13:30-15:30, me: "the supplied font")
 
 - Spec format and tools: `dev/psnova/uitex/SPEC.md`, `apply_spec.py` (decode .aif, clear the Japanese -- transparent /
-  inpaint / fill / per-row fills --, draw Glenth (English) or Segoe UI Bold with our Arabic shaping, re-encode DXT3 with
+  inpaint / fill / per-row fills --, draw the display font (English) or Segoe UI Bold with our Arabic shaping, re-encode DXT3 with
   colour, only changed blocks re-encoded, header and texture ID kept, round-trip checked), `apply_all.sh`,
-  `make_sheets.py`; fonts.json `ui_english` (Glenth) / `ui_arabic`.
+  `make_sheets.py`; fonts.json `ui_english` (the display font) / `ui_arabic`.
 - Workflow psnova-ui-textures (21 tasks): tool author; spec writers for the 9 core textures (tex_nova_ui_Title menu
   banners ~60, tex_nova_ui_common ~25 labels incl. the button guide, tex_Chapter chapter cards, load024 control diagram,
   nova_ui_title, ev_dlc_104 DLC cast card) and 83 tutorial pictures; an apply pass; 6 visual reviewers who fixed specs
@@ -599,7 +599,7 @@ name plates, and the arena quest banner; readable at the game's size; nothing br
   --extra-dir dump/psnova-l10n/uitex/out/<lang>`.
 - Installed 15:09 (lang/en, lang/ar: text + name tables + 88 redrawn textures). **Test 10** (English, full arena route;
   shots dump/psnova-l10n/ingame_text10/, zoom z_ui.png): the character-creation banner reads "Character Creation" in
-  Glenth (over the original "CHARACTER CREATE"), the button guide "Camera Reset" / "Zoom", name plates in English
+  the display font (over the original "CHARACTER CREATE"), the button guide "Camera Reset" / "Zoom", name plates in English
   (Rietheia, Fildia), quest banner and dialogue fine, no broken message boxes with the larger atlases on the route.
   Not reached by the route: tutorial pages with pictures, chapter title cards (checked only in the review previews).
 

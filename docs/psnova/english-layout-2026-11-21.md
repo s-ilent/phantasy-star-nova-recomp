@@ -1,6 +1,6 @@
 # English text layout, 21 November 2026
 
-This change uses the existing English sheet v7 and Glenth fonts. It changes the English presentation of translated text in the PCSG00351 1.05 recomp.
+This change uses the existing English sheet v7 and the supplied font. It changes the English presentation of translated text in the PCSG00351 1.05 recomp.
 
 ## Movies and warning
 
@@ -18,7 +18,7 @@ The installed English text archive contains 6,348 regular dialogue messages, 2,9
 
 The Advanced Personnel survey-team message (101010020140051) measures 371 and 318 px across its two rows. Kisara's Kuklonahda transmission (261211) splits at the sentence boundary into 236 and 231 px. The validator decodes the actual packaged RMDs and checks row order, bounds, glyph counts and caption tile widths.
 
-Every multiline dialogue in the installed archive had strictly descending widths, with a smallest adjacent difference of 2 px. A separate comparison preserved every word and inline control and reproduced the encoded bytes for all 9,577 messages. A pixel comparison against Glenth drawn directly from the sheet matched all 323 caption-format messages and both dialogue examples to within the archive's 4-bit alpha quantization. The installed patch archive is 804,970,984 bytes and its SHA-256 is `82d8d1d0e1d821b375dffbe296a4e03b3860081fafa954acc09f249bf11268fa`. Demuxed audio packet hashes matched the source on all eight story movies and the boot warning.
+Every multiline dialogue in the installed archive had strictly descending widths, with a smallest adjacent difference of 2 px. A separate comparison preserved every word and inline control and reproduced the encoded bytes for all 9,577 messages. A pixel comparison against the supplied font drawn directly from the sheet matched all 323 caption-format messages and both dialogue examples to within the archive's 4-bit alpha quantization. The installed patch archive is 804,970,984 bytes and its SHA-256 is `82d8d1d0e1d821b375dffbe296a4e03b3860081fafa954acc09f249bf11268fa`. Demuxed audio packet hashes matched the source on all eight story movies and the boot warning.
 
 ## Speaker names
 

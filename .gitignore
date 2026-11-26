@@ -36,6 +36,8 @@ runtime/gfx/gfx_gpu.c.before-depthclip
 runtime/gfx/gfx_gpu.c.before-gpulines
 dev/psnova/rmdtext/rmdlib_v1_before_8082fix.py
 dev/psnova/uitex/specwork/apply_spec.before-bc1.py
-# fonts you supply for a pack's localization (Glenth Regular for Phantasy Star Nova's English): not redistributable
+# a pack's localization draws with a font: yours stays local and is never committed, except the default the project
+# ships (SIL OFL, packs/PCSG00351/english/fonts), so a build needs no font of your own
 packs/*/english/fonts/*.ttf
 packs/*/english/fonts/*.otf
+!packs/*/english/fonts/K2D-*.ttf
