@@ -120,3 +120,27 @@ Minor: the runtime's vblank grid is 60.00 Hz, but the game divides by the 59.94 
 - **hookscan output (scratchpad hookscan_out.json)** (tool result, confirmed, high): None of the frame_dt candidates is a per-frame fixed step. 0x8129469c is dead. 0x81365eb6 already scales by the vblank count and would break if hooked. 0x81ac2018/38/70 is a clamp. 0x8186ee46/0x8186f160/0x81fcc6c8 is setup code (unresolved, above). Do not paste its IHOOKS line.
   - evidence: `Each site disassembled above.`
 
+## Re-verified against this build (2026-11-27)
+
+Generated C address = the address written in this file + `0x1700000` (the pack's `MAIN_BASE` `0x82700000` minus the
+analysis base `0x81000000`). Checked on both hard hook sites: this file's `0x81a7756c` is `fn_8317756c` and its
+`0x81b1c958` is `fn_8321c958` in `dump/decrypted/PCSG00351/recomp/game_part*.c`.
+
+**Do not hook the timestep section's addresses blind.** Several do not resolve in the generated C:
+
+| this file | +0x1700000 | in the generated C |
+|---|---|---|
+| 0x81b19e9a (pad key-repeat) | 0x82b19e9a | absent |
+| 0x81a24788 (vblank-counter getter) | 0x82a24788 | absent |
+| 0x81b1a082 ("the call to the key repeat") | 0x82b1a082 | present, but it is a `bne`, not a call |
+
+The 60 fps section's pacing addresses (`0x8178c5f2`, `0x81a242bc`, `0x81a24692`, `0x81a7756c`) are the ones the pack
+actually hooks, and those are the ones to trust. Re-derive a timestep site from the generated C before hooking it.
+
+**Grid rate is frame rate, which is why 120 fps moves every counter.** The limiter waits `uidiv(60, T+0xcc)` vblanks and
+the pack hook writes 60, so a frame is one vblank and the grid rate *is* the frame rate. A 60 Hz grid therefore cannot
+exceed 60 fps, and the flip handshake (SetFrameBuf plus one WaitVblankStart) puts its own one-edge floor under it. So
+120 fps needs a 120 Hz grid, and at 120 Hz every engine timer that counts vblanks ticks at twice the console rate while
+every timer that counts frames ticks at four times the console's 30. Time-based logic is unaffected: the game's clock
+reads 1/120 s per frame at that grid and `speed` reads 1.00x.
+
