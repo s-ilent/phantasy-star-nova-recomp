@@ -1441,19 +1441,23 @@ void window_run(void *(*fn)(void *), void *arg) {
 		/* this loop's SDL_GPU calls under the renderer's lock (gfx_dispatch.c), with Vulkan: SDL's Vulkan backend (3.4.16) isn't
 		 * safe against this thread recording and submitting while the renderer creates, records and submits on others. With
 		 * GPU transfers and snapshots on (gfx_gpu.c), which make and copy more each frame, Killzone crashed inside SDL in this
-		 * thread's submit, or jumped into garbage, in 3 of 4 windowed runs; under the lock, none in 7+ (2026-10-26). Mailbox
-		 * doesn't wait in the acquire, so it goes under the lock too; with vsync the acquire waits a refresh, outside it.
-		 * RECOMP_WINDOW_LOCK=0|1 picks */
+		 * thread's submit, or jumped into garbage, in 3 of 4 windowed runs; under the lock, none in 7+ (2026-10-26).
+		 * The acquire stays outside it in both present modes (2026-11-27): the lock covers what this thread records and
+		 * submits, and mailbox waits in the acquire after all. This loop presents at the display refresh (self_paced, the
+		 * period below), so with a 120 Hz display and a 60 fps game half its presents are repeats of the frame already up,
+		 * and Phantasy Star Nova queued in the acquire while holding the lock 23.72 ms a game frame -- 87% of the wall -- with
+		 * the GPU idle at present (0.00 frames in flight, submit->done 0.5 ms): its guest render thread then queued 12.91 ms
+		 * a frame for the lock, and the game ran at 36 fps. RECOMP_WINDOW_LOCK=0|1 picks (0: no lock at all). */
 		extern void gfx_lock_enter(void), gfx_lock_leave(void);
 		static int wlock = -1; if (wlock < 0) { const char *e = getenv("RECOMP_WINDOW_LOCK"), *dv = SDL_GetGPUDeviceDriver(gpu); wlock = e && *e ? *e != '0' : dv && !strcmp(dv, "vulkan"); }
 		if (wlock) gfx_lock_enter();
 		gpu_sweep(gpu);
-		if (wlock && !self_paced) gfx_lock_leave();   /* (vsync: the acquire waits a refresh, outside the lock) */
+		if (wlock) gfx_lock_leave();   /* (the acquire waits a refresh in either mode: outside the lock, the game's own thread records while this one waits) */
 		SDL_GPUTexture *swap = 0;
 		uint32_t ww = 0, wh = 0;
 		int got_swap = SDL_WaitAndAcquireGPUSwapchainTexture(cmd, win, &swap, &ww, &wh);
 		uint64_t t_blit2 = now_us();
-		if (wlock && !self_paced) gfx_lock_enter();
+		if (wlock) gfx_lock_enter();
 		if (got_swap && ww && wh) { win_pw = ww; win_ph = wh; }
 		/* the frame to show, picked after the drawable wait: whatever the game flipped while this loop
 		 * waited for vsync goes out now, not a refresh later */
