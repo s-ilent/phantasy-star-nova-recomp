@@ -107,18 +107,26 @@ static void psn_settings_trace(void) {
 		fprintf(stderr, "    psn settings: rec %#x frame %llu: camLR %u camUD %u bgm %u se %u voice %u movie %u (stale run camLR %u)\n",
 		        rec, (unsigned long long)display_frames(), camLR, camUD, RD32(rec + 0x164), RD32(rec + 0x168),
 		        RD32(rec + 0x16c), RD32(rec + 0x170), stale);
-	if (n % 600 != 61) return;
-	{	/* repeated through the session: a camera's own copy exists only once a scene with a camera is up */
-		int shown = 0, total = 0;
-		for (uint32_t a = PSN_HEAP_LO; a < PSN_HEAP_HI; a += 4) {
-			if (RD32(a) != camUD) continue;
-			if (a == rec + 0x160) continue;
-			if (a >= rec + 4 && RD32(a + 4) == RD32(rec + 0x164) && RD32(a - 4) == camLR) continue;   /* a copy of the whole run */
-			total++;
-			if (shown++ < 3) fprintf(stderr, "    psn settings: camUD %u also at %#x (before %u after %u)\n", camUD, a, RD32(a - 4), RD32(a + 4));
-		}
-		fprintf(stderr, "    psn settings: scan at frame %llu: %d other words in the heap equal camUD %u\n",
-		        (unsigned long long)display_frames(), total, camUD);
+	if (n != 1261 && n != 6001) return;
+	{	/* The record's own address, wherever the game keeps it. A heap address is a unique word, so this finds the stash
+		 * that points at the settings; if one copy of it sits in the data segment then that copy's address is a
+		 * compile-time constant, and its movw/movt halves name every reader of the settings. The value-based scan this
+		 * replaces was useless: one number matched 233 to 507 words. */
+		static const struct { uint32_t lo, hi; const char *what; } where[] = {
+			{ 0x83b80000u, 0x83c3c3a0u, "data" },
+			{ 0x10000000u, 0x28000000u, "heap" },
+		};
+		uint32_t printed = 0, total = 0;
+		for (unsigned w = 0; w < sizeof where / sizeof where[0]; w++)
+			for (uint32_t a = where[w].lo; a + 4 <= where[w].hi; a += 4)
+				if (RD32(a) == rec) {
+					total++;
+					if (printed++ < 12)
+						fprintf(stderr, "    psn settings: the record's address is held at %#x (%s) frame %llu\n",
+						        a, where[w].what, (unsigned long long)display_frames());
+				}
+		fprintf(stderr, "    psn settings: %u words hold the record's address %#x (frame %llu)\n",
+		        total, rec, (unsigned long long)display_frames());
 	}
 }
 
