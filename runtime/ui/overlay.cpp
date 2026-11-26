@@ -732,7 +732,7 @@ static void page_saves(void) {
 				g_bk_ask = -1; ImGui::CloseCurrentPopup(); backups_rescan();
 			}
 			ImGui::SameLine();
-			if (ImGui::Button("Cancel") || ImGui::IsKeyPressed(ImGuiKey_Escape, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false)) { g_bk_ask = -1; ImGui::CloseCurrentPopup(); }
+			if (ImGui::Button("Cancel") || ImGui::IsKeyPressed(ImGuiKey_Escape, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false)) { g_bk_ask = -1; ImGui::CloseCurrentPopup(); }
 			ImGui::EndPopup();
 		}
 	} else g_bk_ask = -1;
@@ -1154,7 +1154,7 @@ static void build_marks(void) {
 /* the save-data dialog (apputil.c through savedlg.h): the game's save / load / delete list, a yes/no question,
  * or a card the game closes itself (Saving..., a progress bar) -- over the picture while the game waits on it,
  * the game running underneath (it polls the dialog every frame; nothing pauses). The pad: up/down (left/right
- * on a question), Cross to choose, Circle to go back; the keyboard: arrows, Enter or Space, Escape or
+ * on a question), Circle to choose, Cross to go back; the keyboard: arrows, Enter or Space, Escape or
  * Backspace; the mouse: hover and click. window.c hands this the keys and the pad while overlay_dialog_active
  * (ImGui's SDL backend polls the pad itself, so its buttons arrive whatever the routing). */
 static int g_sd_seq = -1, g_sd_sel; static bool g_sd_armed;
@@ -1170,8 +1170,8 @@ int overlay_dialog_active(void) {
 static const ImGuiKey K_UP[] = {ImGuiKey_UpArrow, ImGuiKey_W, ImGuiKey_GamepadDpadUp, ImGuiKey_GamepadLStickUp};
 static const ImGuiKey K_DOWN[] = {ImGuiKey_DownArrow, ImGuiKey_S, ImGuiKey_GamepadDpadDown, ImGuiKey_GamepadLStickDown};
 static const ImGuiKey K_SIDE[] = {ImGuiKey_LeftArrow, ImGuiKey_RightArrow, ImGuiKey_A, ImGuiKey_D, ImGuiKey_GamepadDpadLeft, ImGuiKey_GamepadDpadRight, ImGuiKey_GamepadLStickLeft, ImGuiKey_GamepadLStickRight};
-static const ImGuiKey K_OK[] = {ImGuiKey_Enter, ImGuiKey_KeypadEnter, ImGuiKey_Space, ImGuiKey_GamepadFaceDown};
-static const ImGuiKey K_BACK[] = {ImGuiKey_Escape, ImGuiKey_Backspace, ImGuiKey_GamepadFaceRight};
+static const ImGuiKey K_OK[] = {ImGuiKey_Enter, ImGuiKey_KeypadEnter, ImGuiKey_Space, ImGuiKey_GamepadFaceRight};
+static const ImGuiKey K_BACK[] = {ImGuiKey_Escape, ImGuiKey_Backspace, ImGuiKey_GamepadFaceDown};
 static const ImGuiKey K_DELETE[] = {ImGuiKey_Delete, ImGuiKey_GamepadFaceLeft};
 template <size_t N> static bool keys_pressed(const ImGuiKey (&k)[N], bool repeat = true) { for (ImGuiKey x : k) if (ImGui::IsKeyPressed(x, repeat)) return true; return false; }
 template <size_t N> static bool keys_down(const ImGuiKey (&k)[N]) { for (ImGuiKey x : k) if (ImGui::IsKeyDown(x)) return true; return false; }
@@ -1313,14 +1313,14 @@ static void build_name_editor(float w, float h) {
 	if (editor.pad) {
 		ui::heading(editor.text[0] ? editor.text : "Enter a name", 19 * scale);
 		ImGui::TextDisabled("%u / %u", name_units(editor.text), editor.limit);
-		const bool select = editor.armed && ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false);
+		const bool select = editor.armed && ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false);
 		ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(5 * scale, 6 * scale));
 		ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(3 * scale, 4 * scale));
 		confirm = name_key_grid(editor, select);
 		ImGui::PopStyleVar(2);
 		confirm |= editor.armed && ImGui::IsKeyPressed(ImGuiKey_GamepadStart, false);
-		cancel = editor.armed && ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false);
-		ui::muted_wrapped("D-pad Move   |   A / Cross Select   |   Start Confirm   |   B / Circle Cancel");
+		cancel = editor.armed && ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false);
+		ui::muted_wrapped("D-pad Move   |   B / Circle Select   |   Start Confirm   |   A / Cross Cancel");
 	} else {
 		if (opened) ImGui::SetKeyboardFocusHere();
 		ImGui::PushFont(nullptr, 18 * scale);
@@ -1515,9 +1515,9 @@ static void build_save_dialog(float w, float hgt) {
 		ImGui::Separator();
 		if (ImGui::Button("Back") || back) { answer = SAVEDLG_CANCEL; answered = true; }
 		const bool can_delete = manage && v.nrows && v.rows[g_sd_sel].can_delete;
-		const char *hint = !nova ? "Cross or Enter  Select   |   Circle or Esc  Back" :
+		const char *hint = !nova ? "Circle or Enter  Select   |   Cross or Esc  Back" :
 			mouse_keys ? (can_delete ? "Enter  Select   |   Del  Delete" : "Enter  Select") :
-			(can_delete ? "A / Cross  Select   |   X / Square  Delete" : "A / Cross  Select");
+			(can_delete ? "B / Circle  Select   |   X / Square  Delete" : "B / Circle  Select");
 		if (ImGui::GetItemRectMax().x + ImGui::GetStyle().ItemSpacing.x + ImGui::CalcTextSize(hint).x <=
 		    ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMax().x) ImGui::SameLine();
 		ImGui::AlignTextToFramePadding();
@@ -1538,7 +1538,7 @@ static void build_save_dialog(float w, float hgt) {
 		}
 		if (ok) { answer = g_sd_sel ? SAVEDLG_NO : SAVEDLG_YES; answered = true; }
 		if (back) { answer = SAVEDLG_CANCEL; answered = true; }
-		ui::muted_wrapped(mouse_keys ? "Enter  Confirm   |   Esc  Back" : "A / Cross  Confirm   |   B / Circle  Back");
+		ui::muted_wrapped(mouse_keys ? "Enter  Confirm   |   Esc  Back" : "B / Circle  Confirm   |   A / Cross  Back");
 	} else {   /* SAVEDLG_WAIT: the game closes it */
 		ImGui::PushTextWrapPos(0); ImGui::TextUnformatted(v.msg[0] ? v.msg : "Please wait..."); ImGui::PopTextWrapPos();
 		if (v.percent >= 0) ImGui::ProgressBar(v.percent / 100.0f, ImVec2(-1, 0));

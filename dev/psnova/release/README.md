@@ -75,7 +75,7 @@ The first launch uses English at 4× internal resolution and a 60 FPS target. It
 | Camera | Mouse |
 | Overlay | F10 |
 
-**Controller**: plug in an Xbox-style pad at any time. The default **Auto** input mode follows the device you used last, so you can swap between controller and keyboard and mouse without changing a setting. In the game, **B / Circle** confirms and **A / Cross** cancels, as in the original Japanese game. The PC save and load picker is the opposite: **A / Cross** selects and **B / Circle** goes back. The left and right triggers act as L and R. The left stick moves and the right stick looks.
+**Controller**: plug in an Xbox-style pad at any time. The default **Auto** input mode follows the device you used last, so you can swap between controller and keyboard and mouse without changing a setting. In the game, **B / Circle** confirms and **A / Cross** cancels, as in the original Japanese game. The F10 menu's own dialogs, the save and load picker included, follow the same rule. The left and right triggers act as L and R. The left stick moves and the right stick looks.
 
 **Character names** can be typed on the keyboard, or entered with the controller on the on-screen grid.
 
