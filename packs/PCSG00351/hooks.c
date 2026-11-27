@@ -45,8 +45,8 @@ void recomp_hook_psn_pad_update(Cpu *c) {
  * a switch, it writes nothing: the game's own code runs untouched.
  */
 static void psn_settings_trace(void);   /* below: the option record, under RECOMP_PSN_SETTINGS_TRACE */
-static void psn_settings_read_watch(void);   /* below: the read watch that names the record's reader */
-static void psn_anim_probe(void);   /* below: which of the animation's three dt modes actually runs, under RECOMP_PSN_ANIM_PROBE */
+static void psn_watch_pages(int arm);   /* below: the read watch that names the readers of T, the record and the copies */
+static void psn_read_hit(uint32_t addr);   /* below: what the read watch's page fault reports */
 void recomp_hook_psn_frame_rate(Cpu *c) {
 	(void)c;
 	static int last = 30;
@@ -93,22 +93,25 @@ void recomp_hook_psn_frame_rate(Cpu *c) {
 			fprintf(stderr, "    psn clock: frame %llu target %u fps, last frame %u vblanks = %.4f s, c8 %#x = %.6f, b0xc8 = %.6f\n", (unsigned long long)display_frames(), RD32(t0 + 0xcc), RD16(t0 + 0x8c), f, m, fm, f * fm); }
 	}
 	psn_settings_trace();
-	psn_settings_read_watch();
-	psn_anim_probe();
-	if (want == 30 && last == 30) return;
-	WR32(t + 0xcc, (uint32_t)want);
+	/* The watch's pages are opened silently here, before this hook touches anything, so that the frame's first access is
+	 * the game's and not this diagnostic's own. They are armed again at the end of the hook, once every write of this
+	 * frame is done, which leaves the rest of the frame to the game. */
+	psn_watch_pages(0);
+	const int skip = (want == 30 && last == 30);   /* at 30, and until a switch, writes nothing: the game's own code runs untouched */
+	if (!skip) WR32(t + 0xcc, (uint32_t)want);
 	static uint32_t step60 = 0;   /* RECOMP_PSN_60_STEP=<hex float bits>: the step written at 60 instead of 0.016 (a test switch: 0x3d042108 keeps the game's 1/31) */
 	if (!step60) { const char *e = getenv("RECOMP_PSN_60_STEP"); step60 = e && *e ? (uint32_t)strtoul(e, 0, 16) : 0x3c83126fu; if (!step60) step60 = 0x3c83126fu; }
 	/* The step is the seconds ONE VBLANK of this build's grid is worth, so the clock the game keeps from measured
 	 * vblanks (the count at T+0x8c, the seconds at T+0xb0) stays real time at any grid rate: display_vblank_hz is 60
 	 * unless the frame-rate setting asks for more, when the grid follows the panel and the game runs at its rate
 	 * (its limiter waits uidiv(60, T+0xcc) vblanks: one a frame at 60 leaves 120 a second on a 120 Hz grid). */
-	{
+	if (!skip) {
 		const int hz = display_vblank_hz();
 		if (want == 30) WR32(step, 0x3d042108u);   /* 1/31: the game's own 30 fps value, unchanged */
 		else if (hz != 60) { union { float f; uint32_t u; } v; v.f = 1.0f / (float)hz; WR32(step, v.u); }
 		else WR32(step, step60);
 	}
+	psn_watch_pages(1);   /* arm: whatever touches these pages from here until the next frame is the game */
 	if (want != last) fprintf(stderr, "    psn frame rate: %d fps (frame %llu)\n", want, (unsigned long long)display_frames());
 	last = want;
 }
@@ -206,13 +209,39 @@ static void psn_settings_trace(void) {
  *
  * The read watch has none of that ambiguity. It makes the pages under a range inaccessible; the first access to one
  * opens it and calls the hook. The recompiled game is C, so the hook's own host backtrace IS the guest call chain
- * (fn_<address> frames, innermost first, as the "call to %#x" path puts it), and that names the reader outright.
- * RECOMP_PSN_SETTINGS_READ=1 arms the two camera speeds and re-arms every frame, since the first access opens the page.
- * The whole page faults, so a record sharing its page with hot data would be noisy, and the page opens on its first access
- * whatever that access is, so what it names is the page's first reader in each frame. Hits before frame 1200 are skipped,
- * because the settings loader reads the record at boot and the first frames would be all loader:
- * RECOMP_PSN_SETTINGS_READ_FROM overrides that. Eight hits carry a backtrace, 160 more just their offset from the record.
+ * (fn_<address> frames, nearest the fault first), and that names the reader outright. The map build.py now emits is what
+ * turns those bare offsets into fn_ names.
+ *
+ * Two things this hook must not do, both learned the hard way:
+ *   - it must not touch an armed page itself, or the frame's first access is the diagnostic's own and the reader named is
+ *     this hook. That is what happened twice.
+ *   - the arm lasts until something opens the page, so the hook opens its own pages silently at the start of the frame
+ *     (gwatch_read_open, which does not report) and arms them at the end, leaving the rest of the frame to the game.
+ *
+ * Arming is a whole page at a time, because gwatch_read_arm arms only whole pages inside its range and the rest of a
+ * shared page is someone else's. Three pages are armed: the vsync singleton T (the fps at T+0xcc, the frame seconds at
+ * T+0xb0, the slow-motion scale at T+0xc8, the vblank count at T+0x8c), the option record, and each settings copy the
+ * scan found. T is the one that matters for the cutscene, since whatever reads fps or dt every frame is where a speed of
+ * 4x could come from. A page shared with hot neighbours still only reports its first accessor per frame.
+ * RECOMP_PSN_SETTINGS_READ_FROM overrides the frame hits start at (default 1200).
+ *
+ * A hit names an ADDRESS, not an object, and subtracting a plausible field offset from it invents a base with no evidence:
+ * a probe keyed on 0x10102e4c - 0xc4 = 0x10102d88 read a mode word of 809110056, a stored dt of 1.35e19 and a caller dt of
+ * 2.19e10, which is uninitialised heap, not an animator. Only the backtrace names code; an address alone names a page.
  */
+static void psn_watch_pages(int arm) {
+	static int on = -1;
+	if (on < 0) { on = getenv("RECOMP_PSN_SETTINGS_READ") != 0; if (on) gwatch_set_read_hook(psn_read_hit); }
+	if (!on) return;
+	const uint32_t pg = 1u << gwatch_page_shift();
+	uint32_t pgs[10]; int n = 0;
+	const uint32_t slot = game_addr("psn_vsync_object");
+	if (slot) { const uint32_t t = RD32(slot); if (t) pgs[n++] = t & ~(pg - 1); }
+	const uint32_t rec = psn_rec_addr();
+	if (rec) pgs[n++] = (rec + 0x15c) & ~(pg - 1);
+	for (int i = 0; i < psn_ncopies && n < 10; i++) pgs[n++] = psn_copies[i] & ~(pg - 1);
+	for (int i = 0; i < n; i++) { if (arm) gwatch_read_arm(pgs[i], pg); else gwatch_read_open(pgs[i], pg); }
+}
 static void psn_read_hit(uint32_t addr) {
 	static unsigned n, dumped; static uint64_t from;
 	if (!from) { const char *e = getenv("RECOMP_PSN_SETTINGS_READ_FROM"); from = e && *e ? strtoull(e, 0, 0) : 1200; }
@@ -233,48 +262,12 @@ static void psn_read_hit(uint32_t addr) {
 	if (n++ < 160)
 		fprintf(stderr, "    psn settings: read of %#x (%+d from the record, frame %llu)\n", addr, (int)(addr - psn_rec), (unsigned long long)f);
 }
-static void psn_settings_read_watch(void) {
-	static int on = -1;
-	if (on < 0) { on = getenv("RECOMP_PSN_SETTINGS_READ") != 0; if (on) gwatch_set_read_hook(psn_read_hit); }
-	if (!on) return;
-	const uint32_t rec = psn_rec_addr();
-	/* gwatch_read_arm arms only WHOLE pages that fall inside the range ("the rest of a shared page is someone else's"), so a
-	 * few bytes arm nothing at all: asking for the 8 bytes of the two speed fields rounded the start up and the end down to
-	 * the same boundary and it returned, which is why two runs produced no hits. Give it one aligned page, the granularity
-	 * it works in. The hook is then told the address of whatever touched that page first in the frame, which for a settings
-	 * copy says which field and, through the backtrace, who read it. */
-	const uint32_t pg = 1u << gwatch_page_shift();
-	if (rec) gwatch_read_arm((rec + 0x15c) & ~(pg - 1), pg);
-	for (int i = 0; i < psn_ncopies; i++) if (psn_copies[i] != rec + 0x15c) gwatch_read_arm(psn_copies[i] & ~(pg - 1), pg);
-}
 
 /*
- * Which dt mode the animation actually runs in (2026-11-27). fn_831301c0 chooses between three, and only one of them is
- * unverified:
- *   [obj+0x98] == 1        dt = 1.0 / (float)[T+0xcc]      measured this run as 1/120, correct
- *   else [obj+0xc4] != 0   dt = [obj+0xa8]                 never traced
- *   else                   dt = [T+0xb0] * [T+0xc8]        measured this run as the real frame time, correct
- * Its one caller, fn_831d0fb0, stores the result at [r5+0x1c] and floor-checks it against 1e-06. The read watch caught a
- * per-frame reader of 0x10102e4c, which is 0x10102d88 + 0xc4, so an object of this shape lives there. Reading its mode
- * word, selector, caller dt and stored dt says which branch runs without another watch run. The address comes from a live
- * page hit, so it is a heuristic and allocation could move it; the page scan is what covers that.
- * RECOMP_PSN_ANIM_PROBE=1 prints it once a second.
+ * The dt modes were then settled from the disassembly instead: fn_831301c0 has three exits (1/T->fps, [obj+0xa8], and
+ * T+0xb0*T+0xc8) and its single caller fn_831d0fb0 stores the result at [r5+0x1c]. Modes 1 and 3 measure correct. The
+ * caller-supplied [obj+0xa8] needs the object itself, which only a hook on that function or a watch hit can give.
  */
-static void psn_anim_probe(void) {
-	static int on = -1; if (on < 0) on = getenv("RECOMP_PSN_ANIM_PROBE") != 0;
-	if (!on) return;
-	static unsigned n; if (n++ % 60) return;
-	const uint32_t obj = 0x10102d88u, pg = 0x10102000u;
-	const uint32_t m98 = RD32(obj + 0x98), a8 = RD32(obj + 0xa8), dt = RD32(obj + 0x1c);
-	float fa8, fdt; memcpy(&fa8, &a8, 4); memcpy(&fdt, &dt, 4);
-	fprintf(stderr, "    psn anim: obj %#x frame %llu mode98 %u selc4 %u a8 %#x = %.6f dt1c = %.6f -> mode %s\n",
-	        obj, (unsigned long long)display_frames(), m98, RD8(obj + 0xc4), a8, fa8, fdt,
-	        m98 == 1 ? "1 (1/fps)" : RD8(obj + 0xc4) ? "2 (caller dt)" : "3 (T+0xb0*T+0xc8)");
-	fprintf(stderr, "    psn anim:   page %#x candidates:", pg);
-	for (uint32_t a = pg; a < pg + 0x1000; a += 4)
-		if (RD32(a + 0x98) <= 1 && RD8(a + 0xc4) <= 1 && a != obj) fprintf(stderr, " %#x", a);
-	fprintf(stderr, "\n");
-}
 /*
  * The abort after "Start the Game" (2026-11-18): an Aska worker calls fn_81b2a8bc, a std::map/set insert (MS STL:
  * "if (size >= max_size) _Xlength_error"; max_size 0x071c71c6 = 36-byte nodes), on a tree whose size field (+8) reads
