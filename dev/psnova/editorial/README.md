@@ -76,3 +76,24 @@ python dev/psnova/editorial/nova_validate.py dump/revised.jsonl --changed-from d
 Select specific entries with repeated `--id`, changes with `--changed-from`, or all nonempty targets with `--all`. The original archives are SHA-256 checked, read only, and the production encoder and release font settings are used directly. No CPK is rebuilt. `--font` and `--fallback-font` allow explicit font paths; use the release defaults for comparable results. The output directory must be new. `report.json` lists failures, encoded glyph counts, line widths, layout context and atlas dimensions; failures return a nonzero exit code. `--preview` writes local PNGs reconstructed from the actual encoded glyph atlases. Button and variable placeholders are schematic, and this is not a full game UI render (no game shaders, layout transforms, control colors or dynamic values). Unknown layout contexts are explicitly unverified, not counted as fully checked. For IDs missing from release recipes the corpus context is provisional. Review these cases separately. Synthetic tests cover the adapter, not the actual game archives; run the command locally before accepting any edits.
 
 Assignment manifests are snapshot-bound; regenerate batches when the baseline changes. Submit a single assignment per proposal file, retaining its ID. This enforces declared ownership, not authentication; the coordinator must verify the submitter and keep the manifest immutable. Older batches must be regenerated for the new merge command.
+
+## Terminology and character review
+
+`editorial_review.py` provides a local editorial reference layer. Run from the repository root:
+
+```sh
+python dev/psnova/editorial/editorial_review.py seed dump/editorial-prepared/corpus.jsonl dump/glossary.json
+python dev/psnova/editorial/editorial_review.py profiles dump/editorial-prepared/corpus.jsonl dump/character-evidence.json
+python dev/psnova/editorial/editorial_review.py enrich dump/editorial-batches --glossary dump/glossary.json --profiles dump/character-evidence.json
+python dev/psnova/editorial/editorial_review.py lint dump/revised.jsonl dump/terminology-warnings.json --glossary dump/glossary.json
+```
+
+`seed` discovers alternative translations for identical short source strings. It does not select a preferred translation or automatically import reference wording. `profiles` groups by Japanese speaker name, excludes unresolved glyphs and mismatched event text, and counts possible pronoun forms and sentence endings with evidence message IDs. These are provisional surface observations, not linguistic parsing or confirmed character traits. Character variants remain distinct; inspect quotations, speaker IDs, addressees and context before writing voice guidance. `enrich` adds only terms and compact character profiles relevant to editable batch items; it preserves baseline fingerprints and the coordinator manifest. Regenerate the corpus and assignments after changing source extraction or speaker context.
+
+Glossary format: an object with `version: 1` and a `terms` array. Each term has a unique string `id`, Japanese `source`, and `status` (`candidate`, `verified`, `canonical`, `exception`, `deprecated`, `disputed`). `match` defaults to `exact`; use `substring` only after checking compounds and ambiguity. Optional `categories` and `message_ids` restrict the scope. Canonical and exception entries require an `allowed` list of accepted target forms; deprecated entries require a `deprecated` list. Active entries require `reason` and nonempty `evidence`. For example, using invented terminology:
+
+```json
+{"version":1,"terms":[{"id":"fixture-star","source":"青星","status":"canonical","allowed":["Blue Star","Blue Stars"],"reason":"Reviewed example","evidence":["synthetic fixture"]}]}
+```
+
+An exception must be scoped. Message-specific approved terms override category-specific terms, which override unscoped terms for the same source; equal-priority applicable approved terms are rejected. The linter reports advisory review warnings for missing approved forms or deprecated wording. English matching is case-insensitive, literal and boundary-aware; inflections must be enumerated. It does not prove semantic correctness, enforce capitalization or automatically replace any text. Candidate, verified and disputed entries are informational until an editor explicitly approves them. Run the linter separately before accepting revisions; merge's structural checks remain unchanged. Keep generated terminology, profiles, evidence and enriched batches local.

@@ -34,11 +34,20 @@ def npc_records(root):
                 if len(f)>27 and f[0].startswith('key') and f[1].isdigit():names[f[1]]={'jp':f[26],'model':f[4]}
         p=root/f'scan/{bank}_csv/NpcTalkParameter.csv'
         if p.exists():
-            speaker=None; group=None
+            speaker=None; group=None; ordinal=0
             for i,s in enumerate(p.read_bytes().decode('cp932','replace').splitlines()):
                 f=s.split(',')
-                if len(f)<=26 or not f[0].startswith('key'):continue
-                if f[1].isdigit():speaker=f[1];group=f[0]
+                if len(f)<=26 or not f[0].startswith('key'):
+                    speaker=None; group=None; ordinal=0; continue
+                step=int(f[25]) if f[25].isdigit() else 0
+                if step==1:
+                    # Column 2 identifies generic crew groups, not a named NPC.
+                    speaker=f[1] if f[1].isdigit() and not f[2] else None
+                    group=f[0]; ordinal=1
+                elif not f[1] and not f[2] and step>1 and step==ordinal+1:
+                    ordinal=step
+                else:
+                    speaker=None; group=None; ordinal=0
                 mid=f[26].strip()
                 if mid.isdigit() and speaker and group:
                     refs[mid].append({'table':str(p.relative_to(root)),'scene':'npc:'+group,'speaker_id':speaker,'order':i,'speaker_jp':names.get(speaker,{}).get('jp')})
