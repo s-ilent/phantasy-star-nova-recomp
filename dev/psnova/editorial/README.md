@@ -116,3 +116,20 @@ python dev/psnova/editorial/review_ledger.py dump/corpus.jsonl --assignments dum
 ```
 
 Add `--resolutions dump/lead.jsonl` as needed, and `--finalize` with a new output directory once every assigned ID has a terminal approval. The ledger reports coverage and disagreements, and refuses to emit `revised.jsonl` until all assigned IDs are approved. Unassigned rows and approved unchanged rows are preserved; approved revisions retain the ledger-entry hash. Keep the ledger itself for provenance. This is editorial approval only: run glossary lint and production RMD validation separately, and resolve permission/provenance issues before release. The manifest can cover a pilot subset; completion is relative to that subset, not the whole game. Keep benchmark labels separate from editor and reviewer inputs. Do not publish local review outputs.
+
+## Conversation context browser
+
+`nova_context.py` creates a separate, snapshot-bound index from the locally extracted dataset and prepared editorial corpus. It preserves every parsed event-table and NPC-table occurrence (including repeated IDs and base/update copies). Generic crew groups and invalid NPC continuations remain distinct. Rows without matching RMD messages are displayed as missing, not dropped. Unreferenced messages use explicitly inferred ID/bank groups, not confirmed conversations. The index does not alter the corpus or invalidate existing assignment fingerprints.
+
+From the repository root:
+
+```sh
+python dev/psnova/editorial/nova_context.py dump/corpus.jsonl --index dump/context.json build dump/editorial-dataset
+python dev/psnova/editorial/nova_context.py dump/corpus.jsonl --index dump/context.json message MESSAGE_ID
+python dev/psnova/editorial/nova_context.py dump/corpus.jsonl --index dump/context.json message MESSAGE_ID --occurrences
+python dev/psnova/editorial/nova_context.py dump/corpus.jsonl --index dump/context.json scene 'TABLE::GROUP'
+python dev/psnova/editorial/nova_context.py dump/corpus.jsonl --index dump/context.json search --speaker SpeakerA --speaker SpeakerB
+python dev/psnova/editorial/nova_context.py dump/corpus.jsonl --index dump/context.json browse --out dump/context.html
+```
+
+`message` returns the complete group for each occurrence; `--occurrences` returns only the matching occurrence records. `search` returns group IDs and occurrence counts; repeated `--speaker` arguments require all named speakers to occur in a group, not necessarily to talk directly to each other. Supply `--revised dump/revised.jsonl` before the subcommand to compare existing and revised translations; IDs and original source must match the baseline. The self-contained HTML is read-only and runs locally without a server. It embeds all source and target text, so keep it and the index outside Git and do not publish them. Speaker names remain provisional. Event-table order and NPC continuation order are not proof of runtime execution order, branching or conversation choice logic. UI/quest/skill relationships and Lua control flow are not yet reconstructed. Inspect context at whole-group scope during independent review, but do not edit unassigned IDs.
