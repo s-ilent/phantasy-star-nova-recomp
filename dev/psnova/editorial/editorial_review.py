@@ -100,8 +100,9 @@ def seed(records):
 
 
 # Surface-form observations only. Japanese homographs, quotations and context need a reviewer.
-PERSON = {'first_person': ['わたくし','わたし','あたし','私','僕','ぼく','俺','オレ','おれ','わし','拙者','我輩','吾輩'],
+PERSON = {'first_person': ['わたくし','わたし','あたし','ワタシ','アタシ','私','僕','ぼく','ボク','俺','オレ','おれ','わし','拙者','我輩','吾輩'],
           'second_person': ['あなた','貴方','貴女','お前','おまえ','あんた','アンタ','君','きみ','キミ','貴様','てめえ','そなた']}
+RUBY_PAIR = re.compile(r'\{ruby:([^{}]+)\}([^{}]+)\{/ruby\}')
 PARTICLE = r'(?=[はがをにのもとへでや、。！？!?\s]|$)'
 ENDING = re.compile(r'(です|でした|ます|ました|ません|ございます|だよ|だね|だぞ|だぜ|かしら|なのよ|なのね|だろう|でしょう)(?=[。！？!?…\s]|$)')
 
@@ -119,6 +120,10 @@ def profiles(records):
             for kind,forms in PERSON.items():
                 for form in forms:
                     if re.search(re.escape(form)+PARTICLE,text): hits[(kind,form)].append(r['id'])
+            for reading, base in sorted(set(RUBY_PAIR.findall(r['source']))):
+                # Record explicit pronunciation separately from written surface forms.
+                if any(base in forms or reading in forms for forms in PERSON.values()):
+                    hits[('pronoun_ruby', base+'→'+reading)].append(r['id'])
             for form in sorted(set(ENDING.findall(text))): hits[('sentence_ending',form)].append(r['id'])
         observations=[{'kind':kind,'form':form,'message_count':len(ids),'message_ids':ids[:8]} for (kind,form),ids in sorted(hits.items(),key=lambda kv:(kv[0][0],-len(kv[1]),kv[0][1]))]
         # Pick representative lines from different scenes, rather than the longest speaker monologue.
@@ -143,7 +148,7 @@ def enrich(directory, glossary, profile_data=None):
             p=prof.get(row.get('speaker_jp'))
             if p:
                 # Keep batch context compact; reviewers can consult the complete local profile.
-                speakers[p['id']]={k:v for k,v in p.items() if k not in ('evidence','sample_message_ids','observations')}
+                speakers[p['id']]={k:v for k,v in p.items() if k not in ('evidence','qualitative_evidence','sample_message_ids','observations')}
                 speakers[p['id']]['observations']=[{k:v for k,v in o.items() if k!='message_ids'} for o in p.get('observations',[])]
         b['terminology']=[selected[k] for k in sorted(selected)]
         b['character_profiles']=[speakers[k] for k in sorted(speakers)]

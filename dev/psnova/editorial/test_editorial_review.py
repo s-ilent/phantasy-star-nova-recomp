@@ -42,3 +42,19 @@ class ReviewTests(unittest.TestCase):
             p=Path(td)/'scan/p_csv'; p.mkdir(parents=True)
             (p/'NpcTalkParameter.csv').write_text('\n'.join([row('key1','5015','','1','1'),row('key2','','','2','2'),row('key3','','110','1','3'),row('key4','','','2','4'),row('key5','5001','','1','5'),row('key6','','','3','6')]))
             _,refs=npc_records(Path(td)); self.assertEqual(set(refs),{'1','2','5'})
+    def test_ruby_and_katakana(self):
+        a={'id':'1','source':'{ruby:わたくし}私{/ruby}は星です。','translation':'A star.','speaker':'A','speaker_jp':'エー','scene':'a'}
+        b={**a,'id':'2','source':'ボクが星です。'}
+        rows={r['id']:r for r in (a,b)}
+        profile=er.profiles(rows)['profiles'][0]
+        observed={(o['kind'],o['form']) for o in profile['observations']}
+        self.assertIn(('pronoun_ruby','私→わたくし'),observed)
+        self.assertIn(('first_person','ボク'),observed)
+        profile['voice_guidance']='Use a calm register.'
+        profile['qualitative_evidence']=[{'message_id':'1','observation':'fixture'}]
+        with tempfile.TemporaryDirectory() as td:
+            path=Path(td); l10n.write_jsonl(path/'corpus.jsonl',rows.values()); l10n.batch(path/'corpus.jsonl',path/'batches',10)
+            er.enrich(path/'batches',{'terms':[]},{'profiles':[profile]})
+            enriched=json.loads((path/'batches/batch_0000.json').read_text())['character_profiles'][0]
+            self.assertEqual(enriched['voice_guidance'],profile['voice_guidance'])
+            self.assertNotIn('qualitative_evidence',enriched)
