@@ -2,6 +2,7 @@
 """Offline localization reference and editing utilities; Python 3.10+, SQLite FTS5."""
 import argparse, collections, hashlib, json, re, sqlite3, sys, unicodedata
 from pathlib import Path
+import assignments
 def connect(path):
     db=sqlite3.connect(path); db.row_factory=sqlite3.Row; return db
 def init(db):
@@ -63,7 +64,8 @@ def batch(corpus,out,size):
     records=read_jsonl(corpus); groups=collections.defaultdict(list)
     for r in records.values(): groups[r.get('scene') or r.get('category') or r.get('group') or 'unclassified'].append(r)
     p=Path(out); p.mkdir(parents=True,exist_ok=True)
-    if any(p.glob('batch_*.json')): raise ValueError('batch output directory already contains batches')
+    if any(p.iterdir()): raise ValueError('batch output directory must be empty')
+    manifest={'version':1,'corpus_sha256':assignments.snapshot(records,digest),'assignments':{}}
     n=0
     for group,rows in groups.items():
         for start in range(0,len(rows),size):
@@ -71,20 +73,28 @@ def batch(corpus,out,size):
             items=[{**r,'base_sha256':digest(r)} for r in chunk if not blocked(r)]
             if not items: continue
             context=rows[max(0,start-2):start]+[r for r in chunk if blocked(r)]+rows[start+size:start+size+2]
-            (p/f'batch_{n:04d}.json').write_text(json.dumps({'group':group,'items':items,'read_only_neighbors':context},ensure_ascii=False,indent=2),encoding='utf-8'); n+=1
+            assignment_id=f'batch_{n:04d}'
+            manifest['assignments'][assignment_id]={r['id']:r['base_sha256'] for r in items}
+            (p/f'{assignment_id}.json').write_text(json.dumps({'assignment_id':assignment_id,'group':group,'items':items,'read_only_neighbors':context},ensure_ascii=False,indent=2),encoding='utf-8'); n+=1
+    (p/'assignments.json').write_text(json.dumps(manifest,ensure_ascii=False,indent=2),encoding='utf-8')
     return n
-def merge(corpus,patches,out):
+def merge(corpus,patches,out,manifest):
     records=read_jsonl(corpus); seen=set(); errors=[]; changes={}
+    owners=assignments.load_manifest(manifest,records,digest,blocked)
     for path in patches:
-        for mid,r in read_jsonl(path).items():
+        proposals=read_jsonl(path)
+        if len({str(r.get('assignment_id')) for r in proposals.values()})>1:
+            errors.append(f'{path}: mixed assignments in one proposal file'); continue
+        for mid,r in proposals.items():
             if mid in seen: errors.append(f'{mid}: duplicate edit'); continue
             seen.add(mid); old=records.get(mid)
             if not old or r.get('base_sha256')!=digest(old): errors.append(f'{mid}: unknown/stale base'); continue
             if blocked(old): errors.append(f'{mid}: blocked source glyphs'); continue
+            if mid not in owners or r.get('assignment_id')!=owners[mid]: errors.append(f'{mid}: outside assigned ownership'); continue
             new=r.get('translation'); issues=lint(old,new)
             if issues: errors.extend(f'{mid}: {e}' for e in issues); continue
             if not isinstance(r.get('reason'),str) or not r['reason'].strip(): errors.append(f'{mid}: missing reason'); continue
-            changes[mid]={**old,'translation':new,'review':{'status':'proposed','reason':r['reason'],'base_sha256':r['base_sha256']}}
+            changes[mid]={**old,'translation':new,'review':{'status':'proposed','reason':r['reason'],'base_sha256':r['base_sha256'],'assignment_id':owners[mid]}}
     if errors: raise ValueError('\n'.join(errors))
     if Path(corpus).resolve()==Path(out).resolve(): raise ValueError('refusing to overwrite input corpus')
     write_jsonl(out,(changes.get(mid,r) for mid,r in records.items())); return len(changes)
@@ -94,10 +104,10 @@ def main():
     s=sp.add_parser('conflicts'); s.add_argument('--limit',type=int,default=100)
     sp.add_parser('stats')
     s=sp.add_parser('batch'); s.add_argument('corpus'); s.add_argument('out'); s.add_argument('--size',type=int,default=60)
-    s=sp.add_parser('merge'); s.add_argument('corpus'); s.add_argument('out'); s.add_argument('patches',nargs='+')
+    s=sp.add_parser('merge'); s.add_argument('corpus'); s.add_argument('out'); s.add_argument('patches',nargs='+'); s.add_argument('--assignments',required=True)
     a=p.parse_args()
     if a.cmd=='batch': result={'batches':batch(a.corpus,a.out,a.size)}
-    elif a.cmd=='merge': result={'changed':merge(a.corpus,a.patches,a.out)}
+    elif a.cmd=='merge': result={'changed':merge(a.corpus,a.patches,a.out,a.assignments)}
     else:
         with connect(a.db) as db:
             if a.cmd=='search': result=search(db,a.query,a.locale,a.limit,a.exact,a.corpus)

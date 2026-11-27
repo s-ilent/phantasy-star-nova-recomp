@@ -22,12 +22,12 @@ class Test(unittest.TestCase):
             r={'id':'001','source':'星','translation':'Star','scene':'s1'}
             l10n.write_jsonl(corpus,[r]); self.assertEqual(l10n.batch(corpus,p/'batches',1),1)
             h=json.loads((p/'batches/batch_0000.json').read_text())['items'][0]['base_sha256']
-            l10n.write_jsonl(patch,[{'id':'001','translation':'A star','base_sha256':h,'reason':'Context'}])
-            self.assertEqual(l10n.merge(corpus,[patch],out),1)
+            l10n.write_jsonl(patch,[{'id':'001','translation':'A star','base_sha256':h,'assignment_id':'batch_0000','reason':'Context'}])
+            self.assertEqual(l10n.merge(corpus,[patch],out,p/'batches/assignments.json'),1)
             self.assertEqual(l10n.read_jsonl(out)['001']['translation'],'A star')
-            with self.assertRaises(ValueError): l10n.merge(corpus,[patch,patch],out)
-            with self.assertRaises(ValueError): l10n.merge(out,[patch],p/'out2.jsonl')
-            with self.assertRaises(ValueError): l10n.merge(corpus,[patch],corpus)
+            with self.assertRaises(ValueError): l10n.merge(corpus,[patch,patch],out,p/'batches/assignments.json')
+            with self.assertRaises(ValueError): l10n.merge(out,[patch],p/'out2.jsonl',p/'batches/assignments.json')
+            with self.assertRaises(ValueError): l10n.merge(corpus,[patch],corpus,p/'batches/assignments.json')
             self.assertEqual(l10n.read_jsonl(corpus)['001']['translation'],'Star')
     def test_blocked_source(self):
         with tempfile.TemporaryDirectory() as d:
@@ -39,7 +39,7 @@ class Test(unittest.TestCase):
             self.assertEqual([r['id'] for r in batch['items']],['2'])
             self.assertEqual([r['id'] for r in batch['read_only_neighbors']],['1'])
             l10n.write_jsonl(patch,[{'id':'1','base_sha256':l10n.digest(a),'translation':'Star','reason':'test'}])
-            with self.assertRaisesRegex(ValueError,'blocked source'): l10n.merge(corpus,[patch],out)
+            with self.assertRaisesRegex(ValueError,'blocked source'): l10n.merge(corpus,[patch],out,p/'batches/assignments.json')
             self.assertFalse(out.exists())
     def test_duplicate_id(self):
         with tempfile.TemporaryDirectory() as d:
