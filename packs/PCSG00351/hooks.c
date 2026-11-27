@@ -67,7 +67,18 @@ void recomp_hook_psn_frame_rate(Cpu *c) {
 	 * next vblank), which the metrics confirm on the first run. */
 	const uint32_t t = RD32(obj);
 	const uint32_t vb = t ? RD16(t + 0x8c) : 0;
-	const int want = vb ? (int)(display_vblank_hz() / vb) : last;   /* no measurement this frame (two frames inside one vblank): keep the last rate */
+	/* The game's own vblank count cannot express a rate that is not a whole number of vblanks. A frame that misses its
+	 * vblank by a fraction -- 1.41 vblanks at a 120 Hz grid is a real 85 fps -- reads as 1, so deriving the rate from it
+	 * would keep telling the motions 120 while the frame is a 85th of a second, the sag would still lag behind the audio
+	 * and would still be caught up. The host clock has no such floor, so the rate comes from the time this hook took,
+	 * smoothed over a few frames (one frame's time is noisy). waitstats.c's clock is CLOCK_MONOTONIC and is linked whether
+	 * or not RECOMP_WAIT_STATS is on. The vblank count still answers the first frame, when there is nothing to measure. */
+	extern uint64_t waitstats_now(void);
+	static uint64_t prev_ns; static float ema;
+	const uint64_t now_ns = waitstats_now();
+	if (prev_ns && now_ns > prev_ns) { float r = 1e9f / (float)(now_ns - prev_ns); ema = ema > 0 ? ema + (r - ema) * 0.25f : r; }
+	prev_ns = now_ns;
+	const int want = ema > 0 ? (int)(ema + 0.5f) : (vb ? (int)(display_vblank_hz() / vb) : last);
 	{	/* RECOMP_PSN_FPS_TRACE=1: every 300th frame, what the game's clock measured for the frame before (T+0x8c vblanks, T+0xb0 seconds) */
 		static int tr = -1; if (tr < 0) tr = getenv("RECOMP_PSN_FPS_TRACE") != 0;
 		static unsigned n; const uint32_t t0 = RD32(obj);
