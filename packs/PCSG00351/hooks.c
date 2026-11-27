@@ -219,6 +219,12 @@ static void psn_read_hit(uint32_t addr) {
 	if (dumped++ < 8) {
 		fprintf(stderr, "    psn settings: read of %#x (%+d from the record, frame %llu), innermost guest frame last:\n",
 		        addr, (int)(addr - psn_rec), (unsigned long long)f);
+		/* What the field actually holds, since the address alone only says which offset. The value decides whether this
+		 * page's per-frame reader is a consumer of the settings at all: the camera speeds are 32 and 34 here. */
+		{ float v; uint32_t w = RD32(addr); memcpy(&v, &w, 4);
+		  fprintf(stderr, "    psn settings:   [%#x] = %u (%#x) as float %.6f; words:", addr, w, w, v);
+		  for (int k = -4; k <= 4; k++) fprintf(stderr, " %u", RD32(addr + 4 * k));
+		  fprintf(stderr, "\n"); }
 		plat_backtrace(stderr);
 		return;
 	}
