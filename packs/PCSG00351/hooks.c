@@ -47,6 +47,7 @@ void recomp_hook_psn_pad_update(Cpu *c) {
 static void psn_settings_trace(void);   /* below: the option record, under RECOMP_PSN_SETTINGS_TRACE */
 static void psn_watch_pages(int arm);   /* below: the read watch that names the readers of T, the record and the copies */
 static void psn_read_hit(uint32_t addr);   /* below: what the read watch's page fault reports */
+static void psn_anim_probe(void);   /* below: the animation's dt state, under RECOMP_PSN_ANIM_PROBE */
 void recomp_hook_psn_frame_rate(Cpu *c) {
 	(void)c;
 	static int last = 30;
@@ -112,6 +113,7 @@ void recomp_hook_psn_frame_rate(Cpu *c) {
 		else WR32(step, step60);
 	}
 	psn_watch_pages(1);   /* arm: whatever touches these pages from here until the next frame is the game */
+	psn_anim_probe();
 	if (want != last) fprintf(stderr, "    psn frame rate: %d fps (frame %llu)\n", want, (unsigned long long)display_frames());
 	last = want;
 }
@@ -264,10 +266,37 @@ static void psn_read_hit(uint32_t addr) {
 }
 
 /*
- * The dt modes were then settled from the disassembly instead: fn_831301c0 has three exits (1/T->fps, [obj+0xa8], and
- * T+0xb0*T+0xc8) and its single caller fn_831d0fb0 stores the result at [r5+0x1c]. Modes 1 and 3 measure correct. The
- * caller-supplied [obj+0xa8] needs the object itself, which only a hook on that function or a watch hit can give.
+ * The dt modes were then settled from the disassembly: fn_831301c0 has three exits (1/T->fps, [obj+0xa8], and
+ * T+0xb0*T+0xc8) and its single caller fn_831d0fb0 stores the result at [r5+0x1c]. Modes 1 and 3 measure correct.
+ *
+ * The object the read watch caught can be read directly after all. The hit was 0x10102e4c and fn_8379d050, the innermost
+ * guest frame of that hit, really does read [r0, #0xc4], so 0x10102e4c - 0xc4 = 0x10102d88 is the base its own reader
+ * uses rather than an invented one. Its early readings were uninitialised heap (mode98 809110056, dt1c 1.35e19) and it
+ * later settled to mode98 1, selc4 240, a8 0, dt1c 0 over twenty-four consecutive samples, which is an object being
+ * allocated, not noise. mode98 1 is mode 1, dt = 1/T->fps, measured correct this session, so that player's dt is right.
+ * What was wrong was this probe's gating: it read before allocation and its label fell through to mode 2 on garbage.
+ * It now reports only coherent state and lists the page's other coherent players, since the cutscene's animators are
+ * separate objects and the open question is which mode they use. RECOMP_PSN_ANIM_PROBE=1.
  */
+static void psn_anim_probe(void) {
+	static int on = -1; if (on < 0) on = getenv("RECOMP_PSN_ANIM_PROBE") != 0;
+	if (!on) return;
+	static unsigned n; if (n++ % 120) return;
+	const uint32_t pg = 1u << gwatch_page_shift(), obj = 0x10102d88u;
+	const uint32_t m98 = RD32(obj + 0x98), a8 = RD32(obj + 0xa8), dt = RD32(obj + 0x1c);
+	float fa8, fdt; memcpy(&fa8, &a8, 4); memcpy(&fdt, &dt, 4);
+	const int ok = m98 <= 1 && fa8 > -1.0f && fa8 < 1.0f && fdt > -1.0f && fdt < 1.0f;
+	fprintf(stderr, "    psn anim: frame %llu obj %#x mode98 %u selc4 %u a8 %.6f dt1c %.6f -> %s\n",
+	        (unsigned long long)display_frames(), obj, m98, RD8(obj + 0xc4), fa8, fdt,
+	        !ok ? "not allocated yet" : m98 == 1 ? "mode 1 (1/fps)" : RD8(obj + 0xc4) ? "mode 2 (caller dt)" : "mode 3");
+	fprintf(stderr, "    psn anim:   coherent players on the page:");
+	int shown = 0;
+	for (uint32_t a = pg; a < pg + 0x1000 && shown < 12; a += 4) {
+		const uint32_t m = RD32(a + 0x98), d = RD32(a + 0x1c); float fd; memcpy(&fd, &d, 4);
+		if (m <= 1 && fd > -0.01f && fd < 1.0f) { fprintf(stderr, " %#x(mode %u dt %.5f sel %u)", a, m, fd, RD8(a + 0xc4)); shown++; }
+	}
+	fprintf(stderr, "%s\n", shown ? "" : " none");
+}
 /*
  * The abort after "Start the Game" (2026-11-18): an Aska worker calls fn_81b2a8bc, a std::map/set insert (MS STL:
  * "if (size >= max_size) _Xlength_error"; max_size 0x071c71c6 = 36-byte nodes), on a tree whose size field (+8) reads
