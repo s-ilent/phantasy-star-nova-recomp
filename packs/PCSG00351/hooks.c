@@ -116,36 +116,43 @@ static void psn_settings_trace(void) {
 		        rec, (unsigned long long)display_frames(), camLR, camUD, RD32(rec + 0x164), RD32(rec + 0x168),
 		        RD32(rec + 0x16c), RD32(rec + 0x170), stale);
 	if (n != 1261 && n != 6001) return;
-	{	/* A copy of the camera's own two speeds, as a pair. They are adjacent in the record, so a copy that keeps them
-		 * together is two adjacent words equal to 1 and 99 in either order, or two adjacent floats equal to 1.0 and 99.0.
-		 * Either is a strong fingerprint, unlike a single value (233-507 matches) or a 256 KB pointer window (chance), and
-		 * both of the last three candidates were rejected on exactly that ground: a table entry that happens to be 99.0,
-		 * a stray heap pointer, and the arena base are all common. Eight words either side of a hit say whether it sits
-		 * in something camera-shaped. */
+	{	/* A copy of the option record, or of the camera's own speeds. The two speeds alone are the weakest key the record
+		 * offers: an operator who cannot play at the extremes leaves them close together, and equal values matched 253
+		 * places. The whole run of six (both speeds, then BGM, SE, Voice, Movie) is the strongest key here, and a float
+		 * copy of the two speeds is the shape a camera holding them for itself would take. A lone integer pair is counted
+		 * and never printed, so the budget goes to the keys that mean something. Eight words either side of a hit say
+		 * what it sits in. */
 		uint32_t fLR, fUD; { float a1 = (float)camLR, a2 = (float)camUD; memcpy(&fLR, &a1, 4); memcpy(&fUD, &a2, 4); }
+		uint32_t v[6], fv[6];
+		for (int k = 0; k < 6; k++) { v[k] = RD32(rec + 0x15c + 4 * (uint32_t)k); float t = (float)v[k]; memcpy(&fv[k], &t, 4); }
 		static const struct { uint32_t lo, hi; const char *what; } where[] = {
 			{ 0x83b80000u, 0x83c3c3a0u, "data" },
 			{ 0x10000000u, 0x28000000u, "heap" },
 		};
-		uint32_t ipairs = 0, fpairs = 0, printed = 0;
+		uint32_t runs = 0, fruns = 0, ipairs = 0, fpairs = 0, printed = 0;
 		for (unsigned w = 0; w < sizeof where / sizeof where[0]; w++) {
 			uint32_t lo = where[w].lo + 32, hi = where[w].hi - 32;
 			for (uint32_t a = lo; a < hi; a += 4) {
 				uint32_t x = RD32(a), y = RD32(a + 4);
+				int run = 1, frun = 1;
+				for (int k = 0; k < 6; k++) if (RD32(a + 4 * (uint32_t)k) != v[k]) { run = 0; break; }
+				for (int k = 0; k < 6; k++) if (RD32(a + 4 * (uint32_t)k) != fv[k]) { frun = 0; break; }
 				int ip = (x == camLR && y == camUD) || (x == camUD && y == camLR);
 				int fp = (x == fLR && y == fUD) || (x == fUD && y == fLR);
-				if (!ip && !fp) continue;
+				if (run) runs++;
+				if (frun) fruns++;
 				if (ip) ipairs++;
 				if (fp) fpairs++;
-				if (printed++ >= 12) continue;
-				fprintf(stderr, "    psn settings: %s pair at %#x (%s) frame %llu:",
-				        ip ? "integer" : "float", a, where[w].what, (unsigned long long)display_frames());
+				if ((!run && !frun && !fp) || printed++ >= 12) continue;
+				fprintf(stderr, "    psn settings: %s at %#x (%s) frame %llu:",
+				        run ? "the whole option run" : frun ? "the whole run as floats" : "a float pair for the speeds",
+				        a, where[w].what, (unsigned long long)display_frames());
 				for (int k = -8; k <= 8; k++) fprintf(stderr, " %#x", RD32(a + 4 * k));
 				fprintf(stderr, "\n");
 			}
 		}
-		fprintf(stderr, "    psn settings: %u integer pairs and %u float pairs for (%u, %u) (frame %llu)\n",
-		        ipairs, fpairs, camLR, camUD, (unsigned long long)display_frames());
+		fprintf(stderr, "    psn settings: %u whole runs, %u as floats, %u integer pairs and %u float pairs for (%u, %u, %u, %u, %u, %u) (frame %llu)\n",
+		        runs, fruns, ipairs, fpairs, v[0], v[1], v[2], v[3], v[4], v[5], (unsigned long long)display_frames());
 	}
 }
 
