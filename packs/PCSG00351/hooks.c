@@ -139,12 +139,22 @@ static void psn_settings_trace(void) {
 	if (!on) return;
 	static unsigned n; const uint32_t rec = psn_rec_addr();
 	if (!rec) return;
-	uint32_t camLR = RD32(rec + 0x15c), camUD = RD32(rec + 0x160), stale = RD32(rec + 0xa0);
-	if (n++ % 60 == 0)
-		fprintf(stderr, "    psn settings: rec %#x frame %llu: camLR %u camUD %u bgm %u se %u voice %u movie %u (stale run camLR %u)\n",
-		        rec, (unsigned long long)display_frames(), camLR, camUD, RD32(rec + 0x164), RD32(rec + 0x168),
-		        RD32(rec + 0x16c), RD32(rec + 0x170), stale);
-	if (n != 1261 && n != 6001) return;
+	/* The read watch arms the record's own page, and an arm lasts until something touches it. This diagnostic reads the
+	 * record every second, so with the watch on it opened the page before the game did and the watch reported my own trace
+	 * as the reader of the speed fields. When the watch is on, the per-second read is given up and the page is left to the
+	 * game. The scan's key still has to be read, so the record is read on those two frames only. */
+	const int scan_now = (n == 1261 || n == 6001);
+	static int watching = -1; if (watching < 0) watching = getenv("RECOMP_PSN_SETTINGS_READ") != 0;
+	uint32_t camLR = 0, camUD = 0, stale = 0;
+	if (!watching || scan_now) {
+		camLR = RD32(rec + 0x15c); camUD = RD32(rec + 0x160); stale = RD32(rec + 0xa0);
+		if (!watching && n % 60 == 0)
+			fprintf(stderr, "    psn settings: rec %#x frame %llu: camLR %u camUD %u bgm %u se %u voice %u movie %u (stale run camLR %u)\n",
+			        rec, (unsigned long long)display_frames(), camLR, camUD, RD32(rec + 0x164), RD32(rec + 0x168),
+			        RD32(rec + 0x16c), RD32(rec + 0x170), stale);
+	}
+	n++;
+	if (!scan_now) return;
 	{	/* A copy of the option record, or of the camera's own speeds. The two speeds alone are the weakest key the record
 		 * offers: an operator who cannot play at the extremes leaves them close together, and equal values matched 253
 		 * places. The whole run of six (both speeds, then BGM, SE, Voice, Movie) is the strongest key here, and a float
