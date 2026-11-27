@@ -40,7 +40,8 @@ status = "recommended"
 # the 1.00 counterparts (0x81dd110c, 0x81a028a8...); these are 1.05's, checked against the bytes.
 FUNCTION_SEEDS = "0x81e53e70:thumb 0x81a687a0:arm 0x81a688e8:arm 0x81a698a4:arm 0x81a698b4:arm 0x81a698c4:arm 0x8209d688:arm 0x822b0d6c:thumb"  # the last two: carried over from the development analysis (release 0.1.0 Beta 1)
 HOOKS = "0x81b1c958:psn_pad_update 0x81b2a8bc:psn_tree_insert 0x81a7756c:psn_frame_rate 0x817e850e:psn_rtl_mark 0x817e882e:psn_rtl_mark"   # psn_rtl_mark: Arabic right alignment (with IHOOKS psn_rtl_align; hooks.c, docs/psnova/right-alignment-research.md). diagnostics (hooks.c): the pad device's update (RECOMP_PSN_INPUT_TRACE=1); the map insert that aborts after Start the Game. psn_frame_rate: 60 fps with the frame_rate setting (hooks.c, docs/psnova/60fps-sites.md)
-IHOOKS = "0x81a1f284:psn_input_slot 0x81905b10:psn_rtl_align"   # psn_rtl_align: a box whose message starts with 0x8095 (Arabic) aligns right. diagnostics: each device slot the input thread's loop loads
+# Menu-only repeat delay/interval: preserve the original 30 fps timing on faster grids.
+IHOOKS = "0x81a1f284:psn_input_slot 0x81905b10:psn_rtl_align 0x8190bb4a:psn_menu_repeat_frames 0x8190bb56:psn_menu_repeat_interval"   # psn_rtl_align: a box whose message starts with 0x8095 (Arabic) aligns right. diagnostics: each device slot the input thread's loop loads
 # GAME_ADDRS: the game's own data the host hooks above use -- the vsync object pointer the frame limiter reads and the
 # cloth/physics step psn_frame_rate writes (hooks.c). Data, so packconf shifts them by ADDR_DATA_DELTA, not by the code's.
 GAME_ADDRS = "psn_vsync_object=0x82474314 psn_frame_step=0x82474334"
@@ -66,5 +67,5 @@ MAIN_BASE = "0x82700000"
 ADDR_DATA_DELTA = "0x1714000"
 FUNCTION_SEEDS = "0x81e53e70:thumb 0x81a687a0:arm 0x81a688e8:arm 0x81a698a4:arm 0x81a698b4:arm 0x81a698c4:arm 0x8209d688:arm 0x822b0d6c:thumb"
 HOOKS = "0x81b1c958:psn_pad_update 0x81b2a8bc:psn_tree_insert 0x81a7756c:psn_frame_rate 0x817e850e:psn_rtl_mark 0x817e882e:psn_rtl_mark"
-IHOOKS = "0x81a1f284:psn_input_slot 0x81905b10:psn_rtl_align"
+IHOOKS = "0x81a1f284:psn_input_slot 0x81905b10:psn_rtl_align 0x8190bb4a:psn_menu_repeat_frames 0x8190bb56:psn_menu_repeat_interval"
 GAME_ADDRS = "psn_vsync_object=0x82474314 psn_frame_step=0x82474334"
