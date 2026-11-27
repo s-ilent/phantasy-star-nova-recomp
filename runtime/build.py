@@ -277,7 +277,12 @@ def main(argv):
     host += [f for f in (ENV.get("RECOMP_PACK_SOURCES") or "").split(os.pathsep) if f]
     objs = sorted(glob.glob(os.path.join(glob.escape(OBJ), "*.o"))) + sorted(glob.glob(os.path.join(glob.escape(IMGUIOBJ), "*.o")))
     # (Linux links libm/pthread explicitly; zlib: PSARC archives)
-    link = [CC] + FLAGS + ENVDEF + ["-Wall"] + sdl_cflags + PLATFORM + host + EXTRA + objs + sdl_libs + SPIRV_CROSS + AVCODEC + CURL + CXXLIB + LIBS + ["-o", OUT]
+    # -Wl,-Map: every recompiled guest function is a host function named fn_<its guest address>, and both a stall report and
+    # the read watch's backtrace come out as bare host offsets, because the .exe has no symbol table to resolve them with.
+    # The map is what turns such an offset into the guest function that was running, which is the difference between "the
+    # frame stalled" and "this guest function is why". A build without it cannot answer that at all (2026-11-27: reading the
+    # camera's speed field needed the reader named, and four offsets could not be resolved any other way).
+    link = [CC] + FLAGS + ENVDEF + ["-Wall"] + sdl_cflags + PLATFORM + host + EXTRA + objs + sdl_libs + SPIRV_CROSS + AVCODEC + CURL + CXXLIB + LIBS + ["-Wl,-Map=" + OUT + ".map", "-o", OUT]
     sys.stdout.flush()
     if HOSTED_WINDOWS:
         # Keep the compiler wrapper's command line short and preserve Windows paths and macro quotes.
