@@ -1,0 +1,25 @@
+# Headless, copied-save smoke route for validating extended controller format in Nova.
+# Physical controls are injected before runtime conversion; RECOMP_INPUT remains a separate guest-mask script.
+description = "PS TV controller encoding on Nova's port-0 Positive2 poll"
+fixture = "nova-local-2026-11-27"
+save_row = 0
+expect_slot = 0
+end = 4400
+shots = [4400]
+gfx = "gpu"
+clock = "fixed"
+headless = true
+buttons = [
+  "780-800:8", "1050-1070:8", "1310-1330:8", "1550-1570:8", "1800-1820:8", "2070-2090:8",
+  "1580-1600:2000", "1820-1850:2000",
+]
+sticks = ["2080-2200:128,0"]
+
+[settings]
+frame_rate = 60
+controller_layout = 2
+
+[env]
+RECOMP_CTRL_PHYSICAL = "2100-2102:0x1;2103-2105:0x4;2106-2108:0x10;2109-2111:0x2;2112-2114:0x8;2115-2117:0x20"
+RECOMP_LOG_CTRL_FROM = "2100"
+RECOMP_LOG_CTRL_TO = "2117"
