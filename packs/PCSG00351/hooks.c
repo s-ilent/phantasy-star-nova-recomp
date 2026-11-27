@@ -79,11 +79,17 @@ void recomp_hook_psn_frame_rate(Cpu *c) {
 	if (prev_ns && now_ns > prev_ns) { float r = 1e9f / (float)(now_ns - prev_ns); ema = ema > 0 ? ema + (r - ema) * 0.25f : r; }
 	prev_ns = now_ns;
 	const int want = ema > 0 ? (int)(ema + 0.5f) : (vb ? (int)(display_vblank_hz() / vb) : last);
-	{	/* RECOMP_PSN_FPS_TRACE=1: every 300th frame, what the game's clock measured for the frame before (T+0x8c vblanks, T+0xb0 seconds) */
+	{	/* RECOMP_PSN_FPS_TRACE=1: every 300th frame, what the game's clock measured for the frame before (T+0x8c vblanks, T+0xb0 seconds)
+		 * and T+0xc8, the other factor of the motions' dt (mode 3 is T+0xb0 * T+0xc8, doc item 100). The map resolved the
+		 * read watch's backtrace to fn_8317756c, which is the function this hook already runs on, and it reads both fields,
+		 * so if a motion-driven cutscene runs 4x fast at 120 fps then T+0xc8 is the multiplier that says it and where a
+		 * scaling fix can be written without a new hook. Printed whatever its value, since a legitimate time scale (a
+		 * slow-motion effect) would look the same and must not be overridden blind. */
 		static int tr = -1; if (tr < 0) tr = getenv("RECOMP_PSN_FPS_TRACE") != 0;
 		static unsigned n; const uint32_t t0 = RD32(obj);
 		if (tr && t0 && n++ % 300 == 0) { uint32_t s = RD32(t0 + 0xb0); float f; memcpy(&f, &s, 4);
-			fprintf(stderr, "    psn clock: frame %llu target %u fps, last frame %u vblanks = %.4f s\n", (unsigned long long)display_frames(), RD32(t0 + 0xcc), RD16(t0 + 0x8c), f); }
+			uint32_t m = RD32(t0 + 0xc8); float fm; memcpy(&fm, &m, 4);
+			fprintf(stderr, "    psn clock: frame %llu target %u fps, last frame %u vblanks = %.4f s, c8 %#x = %.6f, b0xc8 = %.6f\n", (unsigned long long)display_frames(), RD32(t0 + 0xcc), RD16(t0 + 0x8c), f, m, fm, f * fm); }
 	}
 	psn_settings_trace();
 	psn_settings_read_watch();
