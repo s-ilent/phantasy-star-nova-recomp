@@ -41,6 +41,7 @@
 #include "metrics.h"
 #include "settings.h"
 #include "overlay.h"
+#include "controller_map.h"
 
 enum { SELECT = 0x1, START = 0x8, UP = 0x10, RIGHT = 0x20, DOWN = 0x40, LEFT = 0x80, LTRIG = 0x100, RTRIG = 0x200,
        TRIANGLE = 0x1000, CIRCLE = 0x2000, CROSS = 0x4000, SQUARE = 0x8000,
@@ -140,6 +141,8 @@ static KbBind kb_binds[] = {
 	{"bind_start", "Start", "Return", START}, {"bind_select", "Select", "Tab", SELECT},
 	{"bind_up", "D-pad up", "Up", UP}, {"bind_down", "D-pad down", "Down", DOWN},
 	{"bind_left", "D-pad left", "Left", LEFT}, {"bind_right", "D-pad right", "Right", RIGHT},
+	{"bind_pstv_l2", "L2 (PS TV extra button)", "1", PAD_L2}, {"bind_pstv_r2", "R2 (PS TV extra button)", "2", PAD_R2},
+	{"bind_pstv_l3", "L3 (PS TV extra button)", "3", L3}, {"bind_pstv_r3", "R3 (PS TV extra button)", "4", R3},
 };
 enum { KB_N = (int)(sizeof kb_binds / sizeof kb_binds[0]) };
 static void tilt_section_update(void) {
@@ -819,8 +822,23 @@ void window_present(uint32_t base, uint32_t w, uint32_t h, uint32_t pitch) {
 	pthread_mutex_unlock(&lock);
 }
 
+static uint32_t ctrl_physical_test_state(void) {   /* RECOMP_CTRL_PHYSICAL: test real PS TV controls before API-format conversion */
+	static const char *script = (const char *)-1;
+	if (script == (const char *)-1) script = getenv("RECOMP_CTRL_PHYSICAL");
+	const uint64_t frame = display_frames();
+	for (const char *q = script; q && *q; ) {
+		char *end; unsigned long first = strtoul(q, &end, 10); if (end == q) break; q = end;
+		unsigned long last = first;
+		if (*q == '-') { last = strtoul(q + 1, &end, 10); if (end == q + 1) break; q = end; }
+		unsigned long mask = 0;
+		if (*q == ':') { mask = strtoul(q + 1, &end, 0); if (end == q + 1) break; q = end; }
+		if (frame >= first && frame <= last) return recomp_ctrl_physical_state((uint32_t)mask);
+		if (*q == ';') q++; else break;
+	}
+	return 0;
+}
 void window_input(uint32_t *b, uint8_t s[4]) {
-	*b = buttons & ~(L3 | R3 | PAD_L2 | PAD_R2);
+	*b = recomp_ctrl_encode_legacy(buttons | ctrl_physical_test_state());
 	for (int i = 0; i < 4; i++) s[i] = sticks[i];
 	/* the sticks are the touch cursor while a bumper is held -- unless the touchpad is doing the touching
 	 * (RB held only to put its fingers on the rear panel: the sticks stay the game's) */
@@ -832,9 +850,9 @@ void window_input(uint32_t *b, uint8_t s[4]) {
 /* a PS TV's pad (display.c: the "2" reads of port 1): the handheld's L and R are its L1 and R1, as a PS TV gives them to a
  * game that never asks; the other shoulder pair is its L2 and R2, and the stick clicks are there */
 void window_input_pad2(uint32_t *b, uint8_t s[4]) {
-	const uint32_t v = buttons;
+	const uint32_t v = buttons | ctrl_physical_test_state();
 	window_input(b, s);
-	*b = (*b & ~(LTRIG | RTRIG)) | (v & LTRIG ? L1 : 0) | (v & RTRIG ? R1 : 0) | (v & PAD_L2 ? LTRIG : 0) | (v & PAD_R2 ? RTRIG : 0) | (v & (L3 | R3));
+	*b = recomp_ctrl_encode_extended(*b | (v & (LTRIG | RTRIG | PAD_L2 | PAD_R2 | L3 | R3)));
 }
 
 static uint32_t pad_bit(int b) {
@@ -855,7 +873,9 @@ static uint32_t pad_bit(int b) {
  * held); a game playing a PS TV has no touch, and there it is the pad's L2 and R2. k: 0 left, 1 right. */
 static void pad_main(SDL_Gamepad *pad, int k, int dn) {
 	(void)pad;
-	int *on = k ? &rtrig_on : &ltrig_on; const uint32_t bit = k ? RTRIG : LTRIG;
+	const uint32_t bit = k ? RTRIG : LTRIG;
+	if (display_pstv_active()) { if (dn) buttons |= bit; else buttons &= ~bit; return; }
+	int *on = k ? &rtrig_on : &ltrig_on;
 	if (dn && !*on) { *on = 1; if (cur_mode) { cur_trig[k] = trig_touch[k] = 1; } else buttons |= bit; }
 	else if (!dn && *on) { *on = 0; buttons &= ~bit; cur_trig[k] = trig_touch[k] = 0; }
 	cur_down = cur_mode && (cur_cross || cur_trig[0] || cur_trig[1]);
@@ -873,17 +893,28 @@ static void pad_second(SDL_Gamepad *pad, int k, int dn) {
 /* display.c's layout card is offered only with a controller there: SDL's own list too, before the loop has seen its event */
 static int pad_connected;   /* (the window loop's gamepad, for other threads) */
 int window_gamepad_connected(void) { return __atomic_load_n(&pad_connected, __ATOMIC_RELAXED) || (active && SDL_HasGamepad()); }
-/* keyboard or mouse tried to play the game in the PS TV layout, a controller's only: the notice why, once a run */
+int window_gamepad_vita_type(void) {
+	if (!active) return 0;
+	int n = 0; SDL_JoystickID *ids = SDL_GetGamepads(&n); if (!ids || n < 1) { SDL_free(ids); return 0; }
+	SDL_GamepadType t = SDL_GetGamepadTypeForID(ids[0]); SDL_free(ids);
+	if (t == SDL_GAMEPAD_TYPE_PS4 || t == SDL_GAMEPAD_TYPE_PS5) return 8;  /* SCE_CTRL_TYPE_DS4 */
+	return 4;  /* SCE_CTRL_TYPE_DS3, generic host gamepads use the only remaining external-pad class */
+}
+/* keyboard/mouse use in the PS TV layout: announce the four new extra-button defaults once */
 static int kbm_pstv_said;
 static void kbm_used(void) {
 	if (kbm_pstv_said || !display_pstv_active()) return;
 	kbm_pstv_said = 1;
-	overlay_toast_titled("Controller layout", "The PS TV layout is for a controller: keyboard and mouse don't play the game in it. For them, choose touch controls when the game starts (or [F10] > Game > Controller layout).", 10.0);
+	overlay_toast_titled("PS TV keyboard bindings", "Keyboard and mouse remain available. Extra buttons: 1=L2, 2=R2, 3=L3, 4=R3. Rebind them in F10 > Controls.", 8.0);
 }
-static void pad_resync(SDL_Gamepad *pad) {   /* L and R as held now (the menu closing): no event says so */
+static void pad_resync(SDL_Gamepad *pad) {   /* restore held inputs after a menu closes; SDL does not replay their down events */
 	for (int k = 0; k < 2; k++) {
 		ptrig[k] = pad && SDL_GetGamepadAxis(pad, k ? SDL_GAMEPAD_AXIS_RIGHT_TRIGGER : SDL_GAMEPAD_AXIS_LEFT_TRIGGER) > 12000;
-		if (pad) pad_main(pad, k, shoulders_swapped ? SDL_GetGamepadButton(pad, k ? SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER : SDL_GAMEPAD_BUTTON_LEFT_SHOULDER) : ptrig[k]);
+		if (!pad) continue;
+		if (display_pstv_active()) {
+			pad_main(pad, k, SDL_GetGamepadButton(pad, k ? SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER : SDL_GAMEPAD_BUTTON_LEFT_SHOULDER));
+			pad_second(pad, k, ptrig[k]);
+		} else pad_main(pad, k, shoulders_swapped ? SDL_GetGamepadButton(pad, k ? SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER : SDL_GAMEPAD_BUTTON_LEFT_SHOULDER) : ptrig[k]);
 	}
 }
 
@@ -947,7 +978,7 @@ static int ensure_src_texture(uint32_t w, uint32_t h) {
 
 /* run fn(arg) as the game; with a window, on its own thread while this one shows frames */
 void window_run(void *(*fn)(void *), void *arg) {
-	const char *hl = getenv("RECOMP_HEADLESS");
+	const char *hl = getenv("RECOMP_HEADLESS"); extern void display_pstv_startup(void);
 	if ((hl && *hl && *hl != '0') || !SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD)) {
 		if (!(hl && *hl && *hl != '0')) fprintf(stderr, "no window (%s): running headless\n", SDL_GetError());
 		/* RECOMP_GFX=gpu needs an SDL_GPUDevice even here: gfx_gpu.c never presents to a window
@@ -957,6 +988,7 @@ void window_run(void *(*fn)(void *), void *arg) {
 		 * which needs a window. SDL_GPU itself still needs SDL_INIT_VIDEO initialised. */
 		extern void *gfx_gpu_create_device(void);
 		if (SDL_Init(SDL_INIT_VIDEO)) gpu = gfx_gpu_create_device();
+		display_pstv_startup();
 		fn(arg);
 		return;
 	}
@@ -1007,6 +1039,7 @@ void window_run(void *(*fn)(void *), void *arg) {
 	if (settings_int("fullscreen", 0)) SDL_SetWindowFullscreen(win, true);
 	if (gpu) overlay_init(gpu, win, SDL_GetGPUSwapchainTextureFormat(gpu, win));
 	SDL_Gamepad *pad = pad_open(0);
+	display_pstv_startup();  /* explicit layout is immutable before module_start; Ask waits for guest startup with SDL live */
 	int pad_back = 0, pad_start = 0, pad_combo_latch = 0;
 	uint64_t last_overlay_t = 0;
 	active = 1;
@@ -1113,7 +1146,7 @@ void window_run(void *(*fn)(void *), void *arg) {
 				int i = kb_find(e.key.key), dn = e.type == SDL_EVENT_KEY_DOWN;
 				if (i >= 0) {
 					kb_binds[i].held = dn;
-					if (kb_binds[i].bit && !display_pstv_active()) { if (dn) buttons |= kb_binds[i].bit; else buttons &= ~kb_binds[i].bit; }   /* (the PS TV layout: a controller's only, kbm_used) */
+					if (kb_binds[i].bit) { if (dn) buttons |= kb_binds[i].bit; else buttons &= ~kb_binds[i].bit; }
 					if (dn) { kbm_used(); kbm_auto = 1; snprintf(kbm_why, sizeof kbm_why, "the key %s", SDL_GetKeyName(e.key.key)); }
 				}
 			}
@@ -1121,12 +1154,12 @@ void window_run(void *(*fn)(void *), void *arg) {
 				if (e.gsensor.sensor == SDL_SENSOR_ACCEL) motion_feed_accel(e.gsensor.data, e.gsensor.sensor_timestamp);
 				else if (e.gsensor.sensor == SDL_SENSOR_GYRO) motion_feed_gyro(e.gsensor.data, e.gsensor.sensor_timestamp);
 			}
-			if (e.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN && e.gbutton.button == SDL_GAMEPAD_BUTTON_RIGHT_STICK) motion_recenter();   /* R3 (the Vita has no stick clicks): the gyro's heading becomes straight ahead */
+			if (e.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN && e.gbutton.button == SDL_GAMEPAD_BUTTON_RIGHT_STICK && !display_pstv_active()) motion_recenter();   /* handheld gyro recenter; PS TV R3 is Nova's view toggle */
 			if (e.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN || e.type == SDL_EVENT_GAMEPAD_BUTTON_UP) {
 				int dn = e.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN, b = e.gbutton.button;
 				if (b == SDL_GAMEPAD_BUTTON_LEFT_SHOULDER || b == SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER) {
 					const int k = b == SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER;
-					if (shoulders_swapped) pad_main(pad, k, dn); else pad_second(pad, k, dn);
+					if (display_pstv_active() || shoulders_swapped) pad_main(pad, k, dn); else pad_second(pad, k, dn);
 				} else if (b == SDL_GAMEPAD_BUTTON_SOUTH && (cur_mode || cur_down || cur_cross)) {
 					cur_cross = dn && cur_mode;            /* Cross is the touch while a bumper is held */
 					cur_down = cur_mode && (cur_cross || cur_trig[0] || cur_trig[1]);
@@ -1139,7 +1172,7 @@ void window_run(void *(*fn)(void *), void *arg) {
 				const int k = e.gaxis.axis == SDL_GAMEPAD_AXIS_RIGHT_TRIGGER, was = ptrig[k];
 				if (!was && e.gaxis.value > 12000) ptrig[k] = 1;
 				else if (was && e.gaxis.value < 8000) ptrig[k] = 0;
-				if (ptrig[k] != was) { if (shoulders_swapped) pad_second(pad, k, ptrig[k]); else pad_main(pad, k, ptrig[k]); }
+				if (ptrig[k] != was) { if (display_pstv_active() || !shoulders_swapped) pad_second(pad, k, ptrig[k]); else pad_main(pad, k, ptrig[k]); }
 			}
 			if (e.type == SDL_EVENT_GAMEPAD_TOUCHPAD_DOWN || e.type == SDL_EVENT_GAMEPAD_TOUCHPAD_MOTION || e.type == SDL_EVENT_GAMEPAD_TOUCHPAD_UP) {
 				int f = e.gtouchpad.finger;
@@ -1214,8 +1247,7 @@ void window_run(void *(*fn)(void *), void *arg) {
 			static int loaded; if (!loaded) { loaded = 1; kb_reload(); }
 			char mb[8]; const char *mode = settings_str("input_mode", "auto", mb, sizeof mb);
 			int on = !strcmp(mode, "kbm") ? 1 : !strcmp(mode, "pad") ? 0 : kbm_auto;
-			const int pstv = display_pstv_active();   /* the PS TV layout is a controller's only: no keyboard-and-mouse scheme, no capture */
-			if (on && pstv) { kbm_used(); on = 0; }
+			const int pstv = display_pstv_active();   /* PS TV encoding also accepts keyboard/mouse virtual-controller inputs */
 			static int said;
 			if (on != kbm_on) { extern uint64_t display_frames(void); fprintf(stderr, "    input: %s (%s%s, frame %llu)\n", on ? "keyboard and mouse" : "the controller", strcmp(mode, "auto") ? "Play with: " : "", strcmp(mode, "auto") ? mode : kbm_why[0] ? kbm_why : "start", (unsigned long long)display_frames()); }
 			if (on && !kbm_on && !said) { said = 1; overlay_toast_titled("Keyboard & mouse", "The mouse looks and aims -- hold [Alt] for the cursor\nControls: [F10]", 6.0); }

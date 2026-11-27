@@ -59,6 +59,18 @@ int guest_mem_ranges(uint32_t lo[], uint32_t hi[], int max) {
 	lo[n] = GUEST_HEAP; hi[n] = heap_top; n++;
 	return n;
 }
+int guest_mem_valid(uint32_t addr, uint32_t size) {
+	if (!addr || !size || size > UINT32_MAX - addr) return 0;
+	const uint32_t end = addr + size;
+	uint32_t lo[65], hi[65]; int n;
+	pthread_mutex_lock(&host_lock);
+	n = 0;
+	for (int i = 0; i < nseg && n < 64; i++) { lo[n] = seg_lo[i]; hi[n] = seg_hi[i]; n++; }
+	lo[n] = GUEST_HEAP; hi[n] = heap_top; n++;
+	pthread_mutex_unlock(&host_lock);
+	for (int i = 0; i < n; i++) if (addr >= lo[i] && end <= hi[i]) return 1;
+	return 0;
+}
 uint32_t guest_alloc(uint32_t size, uint32_t align) {
 	if (align < 16) align = 16;
 	pthread_mutex_lock(&host_lock);

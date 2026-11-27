@@ -18,6 +18,8 @@
 #include "gfx.h"
 #include "metrics.h"
 #include "settings.h"
+#define SCE_CTRL_ERROR_INVALID_ARG 0x80340001u
+#define SCE_CTRL_MAX_PORT 4u
 
 static uint64_t raw_us(void) { struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t); return (uint64_t)t.tv_sec * 1000000 + t.tv_nsec / 1000; }
 /* the in-game overlay's pause (display_set_paused, called by overlay.cpp as the menu opens and
@@ -829,7 +831,8 @@ static void ctrl_peek(Cpu *c, int pad2) {   /* (port, SceCtrlData *, count): tim
 	}
 	RET(A2);
 }
-static void h_ctrl_peek(Cpu *c) { ctrl_peek(c, 0); }
+static int ctrl_args_valid(Cpu *c);
+static void h_ctrl_peek(Cpu *c) { if (!ctrl_args_valid(c)) { RET(SCE_CTRL_ERROR_INVALID_ARG); return; } ctrl_peek(c, 0); }
 /* the Read forms block until a sample this thread hasn't seen exists -- the hardware samples the
  * controller and the panels once per vblank edge and Read waits for the next one -- while Peek
  * returns the latest sample at once. A thread that waits for vblank then reads once a frame never
@@ -840,7 +843,7 @@ static void h_ctrl_peek(Cpu *c) { ctrl_peek(c, 0); }
  * both touch panels every frame (port 0 then 1); with one edge per thread the second read blocked
  * for a whole vblank, the main loop ran at half rate and its menu froze. RECOMP_READ_NOWAIT=1:
  * the old behaviour (every Read returns at once) for comparison. */
-static __thread uint64_t ctrl_read_edge[4], touch_read_edge[2];
+static __thread uint64_t ctrl_read_edge[5], touch_read_edge[2];
 static void read_wait(uint64_t *last) {
 	static int nowait = -1; if (nowait < 0) nowait = getenv("RECOMP_READ_NOWAIT") != 0;
 	if (nowait) return;
@@ -848,9 +851,11 @@ static void read_wait(uint64_t *last) {
 	if (*last == now) { vb_wait_until(now + 1, 0); now = vb_now(); }   /* count 0: paces the thread, doesn't advance the fixed clock (a polling pad thread made guest time run 8x fast) */
 	*last = now;
 }
-static void h_ctrl_read(Cpu *c) { read_wait(&ctrl_read_edge[A0 & 3]); ctrl_peek(c, 0); }
+static int ctrl_args_valid(Cpu *c) {
+	return A0 <= SCE_CTRL_MAX_PORT && A2 >= 1 && A2 <= 64 && A1 <= UINT32_MAX - A2 * 0x20u && guest_mem_valid(A1, A2 * 0x20u);
+}
+static void h_ctrl_read(Cpu *c) { if (!ctrl_args_valid(c)) { RET(SCE_CTRL_ERROR_INVALID_ARG); return; } read_wait(&ctrl_read_edge[A0]); ctrl_peek(c, 0); }
 static void h_audio_adopt(Cpu *c) { RET(1); }
-#define SCE_CTRL_ERROR_INVALID_ARG 0x80340001u
 /* PS TV mode. A game that reads pad port 1 and gets an answer takes itself for a PS TV with a paired pad: no touch screen
  * at all, and the touch screen's actions on buttons and the sticks, its own PS TV layout (Killzone 1.12 looks once at
  * boot; 1.00 never does). A handheld's port 1 fails. The game decides there and keeps it: ~20 of its setups ask once,
@@ -863,26 +868,53 @@ static void h_audio_adopt(Cpu *c) { RET(1); }
  * input as port 0 in a DualShock's layout (window_input_pad2: its L1/R1 are the handheld's L/R, as a PS TV gives a game
  * that doesn't ask; Killzone aims and fires on them); ports 2-4 stay unpaired. */
 static int pstv_looked, pstv_on;
+static int pstv_resolved = -1;
+static pthread_mutex_t pstv_mode_lock = PTHREAD_MUTEX_INITIALIZER;
 int display_pstv_looked(void) { return __atomic_load_n(&pstv_looked, __ATOMIC_RELAXED); }
 int display_pstv_active(void) { return __atomic_load_n(&pstv_on, __ATOMIC_RELAXED); }   /* (window.c: the shoulder pair that isn't L and R is the pad's L2/R2, not the touch cursor) */
-static int pstv_mode(void) {   /* the game's look at boot, answered once */
-	static int v = -1;
-	if (v < 0) {
+static void pstv_set(int v, int setting, const char *why) {
+	pstv_resolved = v != 0;
+	__atomic_store_n(&pstv_on, pstv_resolved, __ATOMIC_RELEASE);
+	fprintf(stderr, "    ctrl: hardware profile %s (controller_layout %d%s)\n",
+	        pstv_resolved ? "PS TV" : "standard handheld", setting, why ? why : "");
+}
+/* Resolve explicit layouts before module_start. Ask remains guest-thread driven so SDL's event loop
+ * can answer it; headless Ask is always the handheld profile. */
+void display_pstv_startup(void) {
+	extern int settings_int(const char *, int);
+	int s = settings_int("controller_layout", 0); if (s < 0 || s > 2) s = 0;
+	const char *headless = getenv("RECOMP_HEADLESS");
+	const int is_headless = headless && *headless && *headless != '0';
+	if (s == 0 && !is_headless) return;
+	pthread_mutex_lock(&pstv_mode_lock);
+	if (pstv_resolved < 0) pstv_set(s == 2, s, s == 0 ? ", headless default" : ", resolved before guest startup");
+	pthread_mutex_unlock(&pstv_mode_lock);
+}
+static int pstv_mode(void) {   /* the game's hardware/profile query, answered once */
+	pthread_mutex_lock(&pstv_mode_lock);
+	if (pstv_resolved < 0) {
 		extern int settings_int(const char *, int); extern int window_gamepad_connected(void); extern int window_active(void);
 		extern int overlay_layout_ask(void);
 		int s = settings_int("controller_layout", 0); if (s < 0 || s > 2) s = 0;
 		const int asked = s == 0 && window_active() && window_gamepad_connected();
-		v = s == 2 || (asked && overlay_layout_ask() == 2);
-		__atomic_store_n(&pstv_on, v, __ATOMIC_RELAXED);
-		fprintf(stderr, "    ctrl: the game asks for a PS TV's pad: %s (controller_layout %d%s)\n", v ? "answered, a PS TV: its button layout, no touch" : "refused, a handheld: touch",
-		        s, asked ? ", the player's choice at the card" : "");
+		pstv_set(s == 2 || (asked && overlay_layout_ask() == 2), s, asked ? ", chosen at startup" : "");
 	}
+	int v = pstv_resolved;
+	pthread_mutex_unlock(&pstv_mode_lock);
 	return v;
 }
+int display_pstv_mode_for_guest(void) { return pstv_mode(); }
 static int pstv_port_ok(uint32_t port) { if (!port) return 1; __atomic_store_n(&pstv_looked, 1, __ATOMIC_RELAXED); return port == 1 && pstv_mode(); }
-/* port 0 of the "2" reads is the handheld's own buttons, as the other reads have them; port 1 is the PS TV's pad */
-static void h_ctrl_read2(Cpu *c) { if (!pstv_port_ok(A0)) { RET(SCE_CTRL_ERROR_INVALID_ARG); return; } read_wait(&ctrl_read_edge[A0 & 3]); ctrl_peek(c, A0 != 0); }
-static void h_ctrl_peek2(Cpu *c) { if (!pstv_port_ok(A0)) { RET(SCE_CTRL_ERROR_INVALID_ARG); return; } ctrl_peek(c, A0 != 0); }
+/* Positive2 is an API format, not a port number. Port 0 remains the primary controller in PS TV mode. */
+static void h_ctrl_read2(Cpu *c) {
+	if (!ctrl_args_valid(c) || !pstv_port_ok(A0)) { RET(SCE_CTRL_ERROR_INVALID_ARG); return; }
+	int ext = A0 != 0 || pstv_mode();
+	read_wait(&ctrl_read_edge[A0]); ctrl_peek(c, ext);
+}
+static void h_ctrl_peek2(Cpu *c) {
+	if (!ctrl_args_valid(c) || !pstv_port_ok(A0)) { RET(SCE_CTRL_ERROR_INVALID_ARG); return; }
+	ctrl_peek(c, A0 != 0 || pstv_mode());
+}
 /* SceTouchData (0x90 bytes, VitaSDK psp2/touch.h): u64 timestamp, u32 status, u32 report count, 8
  * reports {u8 id, u8 force, s16 x, s16 y, u8 reserved[8], u16 info}. RECOMP_TOUCH="from-to:x,y;..."
  * (frame ranges, front panel coordinates 1920x1088) touches the front panel in scripted runs.
@@ -1062,6 +1094,18 @@ static void h_motion_basic(Cpu *c) {   /* (SceFVector3 *) */
 /* sceMotionReset: the console restarts its orientation estimate; here, the heading recentres */
 static void h_motion_reset(Cpu *c) { if (motion_log()) fprintf(stderr, "    motion: reset at frame %llu (lr %#x)\n", (unsigned long long)frames, c->r[14]); motion_recenter(); RET(0); }
 
+/* SceCtrlPortInfo: five controller type bytes and eleven reserved bytes. Port 0 is
+ * the built-in controller on a handheld and the virtual controller on PS TV. */
+static void h_ctrl_multi_supported(Cpu *c) { RET(pstv_mode() ? 1u : 0u); }
+static void h_ctrl_port_info(Cpu *c) {
+	if (!guest_mem_valid(A0, 16)) { RET(SCE_CTRL_ERROR_INVALID_ARG); return; }
+	uint8_t info[16] = {0};
+	const int tv = pstv_mode();
+	info[0] = tv ? 2 : 1;  /* VIRT : PHY */
+	if (tv) { extern int window_gamepad_vita_type(void); info[1] = (uint8_t)window_gamepad_vita_type(); }
+	memcpy(G(A0), info, sizeof info);
+	RET(0);
+}
 /* set-up calls with nothing to set up (motion tuning). SceSystemGesture is gesture.c */
 static void h_input_ok(Cpu *c) { RET(0); }
 
@@ -1083,6 +1127,7 @@ const HleEntry hle_display[] = {
 	{"sceAudioOutGetAdopt", h_audio_adopt},   /* (port type): 1, the type can be opened -- only voice chat or the system's music takes one */
 	{"sceDisplayGetRefreshRate", h_refresh_rate},
 	{"sceCtrlSetSamplingMode", h_ctrl_mode}, {"sceCtrlSetSamplingModeExt", h_ctrl_mode}, {"sceTouchSetSamplingState", h_touch_sampling},
+	{"sceCtrlIsMultiControllerSupported", h_ctrl_multi_supported}, {"sceCtrlGetControllerPortInfo", h_ctrl_port_info},
 	{"sceMotionStartSampling", h_motion_start}, {"sceMotionStopSampling", h_motion_stop}, {"sceMotionGetState", h_motion_state},
 	{"sceMotionGetBasicOrientation", h_motion_basic}, {"sceMotionReset", h_motion_reset}, {"sceMotionSetDeadband", h_input_ok}, {"sceMotionSetTiltCorrection", h_input_ok},
 	{0, 0},

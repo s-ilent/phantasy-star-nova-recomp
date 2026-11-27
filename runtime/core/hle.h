@@ -29,6 +29,7 @@ uint32_t guest_alloc(uint32_t size, uint32_t align);
 uint32_t gpu_dev_to_cpu(uint32_t dev);   /* the CPU memory behind a GPU device address (gpu.c) */
 uint32_t gpu_render_target_info(uint32_t handle, uint32_t *width, uint32_t *height);   /* samples per pixel x:16 y:16, 0 unknown (gpu.c) */
 int guest_mem_ranges(uint32_t lo[], uint32_t hi[], int max);   /* image segments + heap in use */
+int guest_mem_valid(uint32_t addr, uint32_t size);              /* complete range lies in a loaded segment or allocated heap */
 uint32_t guest_call(Cpu *parent, uint32_t fn, uint32_t a0, uint32_t a1);   /* run guest code from a system call */
 uint32_t guest_call4(Cpu *parent, uint32_t fn, uint32_t a0, uint32_t a1, uint32_t a2, uint32_t a3);   /* the same with four arguments (kernel.c) */
 /* kernel callbacks (kernel.c) for display.c's vblank callback: a notification (count: how many; the

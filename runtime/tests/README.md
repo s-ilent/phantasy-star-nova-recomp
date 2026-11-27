@@ -68,6 +68,14 @@ cc -O1 -g -Wall -Wno-unused-function $INC gesture_test.c -o /tmp/gesture_test -l
 
 It prints `scripted taps: N checks, 0 failed` and `console trace: 684 records, 0 differ`.
 
+## Controller mapping: `ctrl_test.c`
+
+Checks the pure PS TV controller encoder shared by the SDL input path. It verifies the legacy and extended masks for L1/R1, L2/R2, L3/R3, simultaneous shoulder combinations, ordinary button preservation, neutral stick bytes, and the 32-byte `SceCtrlData` offsets. It also checks the `RECOMP_CTRL_PHYSICAL` mask-to-runtime-state conversion. Route scripts can inject physical PS TV controls before API formatting with `RECOMP_CTRL_PHYSICAL="from-to:mask;..."`; mask bits are `1=L1`, `2=R1`, `4=L2`, `8=R2`, `0x10=L3`, `0x20=R3`. This is separate from `RECOMP_INPUT`, whose Vita masks are ORed after API conversion. It does not replace production SDL event-path or guest polling tests.
+
+```
+cc -O1 -g -Wall -Wextra -I ../input ctrl_test.c -o /tmp/ctrl_test && /tmp/ctrl_test
+```
+
 ## JPEG: `jpeg_test.c`
 
 Checks `runtime/media/jpeg.c` (SceJpeg and SceJpegEnc) the way Uncharted's photo minigame uses it: a 960x544 picture

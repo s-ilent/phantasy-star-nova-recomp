@@ -422,7 +422,11 @@ static void h_libc_mktime(Cpu *c) {
 	if (A2) WR64(A2, (uint64_t)t);
 	RET(0);
 }
+static void h_kernel_model(Cpu *c) { extern int display_pstv_mode_for_guest(void); RET(display_pstv_mode_for_guest() ? 0x20000u : 0x10000u); }
+static void h_kernel_model_cdialog(Cpu *c) { h_kernel_model(c); }
+static void h_kernel_is_pstv(Cpu *c) { extern int display_pstv_mode_for_guest(void); RET(display_pstv_mode_for_guest() ? 1u : 0u); }
 const HleEntry hle_sysmem[] = {
+	{"sceKernelGetModel", h_kernel_model}, {"sceKernelGetModelForCDialog", h_kernel_model_cdialog}, {"sceKernelIsPSVitaTV", h_kernel_is_pstv},
 	{"sceKernelGetProcessTimeWide", h_time_wide},
 	{"sceKernelGetProcessTimeLow", h_time_low},
 	{"sceKernelGetProcessTime", h_time},
