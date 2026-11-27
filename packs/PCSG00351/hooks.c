@@ -214,10 +214,14 @@ static void psn_settings_read_watch(void) {
 	if (on < 0) { on = getenv("RECOMP_PSN_SETTINGS_READ") != 0; if (on) gwatch_set_read_hook(psn_read_hit); }
 	if (!on) return;
 	const uint32_t rec = psn_rec_addr();
-	if (rec) gwatch_read_arm(rec + 0x15c, 8);   /* both camera speeds, adjacent: re-armed each frame, since the first access opens the page */
-	/* The record's own page produced no hits at all, so the game does not read the record each frame; the scan's copies are
-	 * what it reads. Arm those too, which is what names the reader of the speed fields. */
-	for (int i = 0; i < psn_ncopies; i++) if (psn_copies[i] != rec + 0x15c) gwatch_read_arm(psn_copies[i], 8);
+	/* gwatch_read_arm arms only WHOLE pages that fall inside the range ("the rest of a shared page is someone else's"), so a
+	 * few bytes arm nothing at all: asking for the 8 bytes of the two speed fields rounded the start up and the end down to
+	 * the same boundary and it returned, which is why two runs produced no hits. Give it one aligned page, the granularity
+	 * it works in. The hook is then told the address of whatever touched that page first in the frame, which for a settings
+	 * copy says which field and, through the backtrace, who read it. */
+	const uint32_t pg = 1u << gwatch_page_shift();
+	if (rec) gwatch_read_arm((rec + 0x15c) & ~(pg - 1), pg);
+	for (int i = 0; i < psn_ncopies; i++) if (psn_copies[i] != rec + 0x15c) gwatch_read_arm(psn_copies[i] & ~(pg - 1), pg);
 }
 
 /*
