@@ -1,0 +1,15 @@
+{
+ "$schema":"https://json-schema.org/draft/2020-12/schema",
+ "title":"Character editorial profile",
+ "type":"object",
+ "required":["id","name","status","evidence"],
+ "properties":{
+  "id":{"type":"string"},"name":{"type":"string"},"name_ja":{"type":"string"},
+  "status":{"enum":["unknown","provisional","reviewed"]},
+  "first_person_ja":{"type":"array","items":{"type":"string"}},
+  "second_person_ja":{"type":"array","items":{"type":"string"}},
+  "protagonist_address":{"type":"array","items":{"type":"string"}},
+  "relationships":{"type":"object"},"register":{"type":"string"},"voice_guidance":{"type":"string"},
+  "evidence":{"type":"array","items":{"type":"object","required":["message_id","observation"],"properties":{"message_id":{"type":"string"},"observation":{"type":"string"}}}}
+ }
+}
