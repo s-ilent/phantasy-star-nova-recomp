@@ -1290,7 +1290,19 @@ static uint32_t run_callbacks(Cpu *c) {
 		pthread_mutex_unlock(&o->m);
 		if (!n) continue;
 		ran++;
-		if (guest_call4(c, o->func, id, (uint32_t)n, arg, o->common)) obj_delete(o);   /* nonzero: the callback deletes itself */
+		/* The display's vblank callback (notifier 0: display.c's grid) runs once per vblank it was notified of, not once
+		 * with the count. The API aggregates -- a callback handed notifyCount is expected to handle that many events --
+		 * and hardware behaves the same way, but the thread owning this one is the game's own vblank loop and it is the
+		 * only witness to the wall clock. Phantasy Star Nova's callback adds 1 to the vblank counter and ignores
+		 * notifyCount, so when that thread ran once a frame instead of once a vblank the counter lost the difference and
+		 * the game's own frame time fell to 0.56x of real time (measured 2026-11-27), taking its cutscene timing with it.
+		 * One invocation per edge returns the edges; a callback that honours notifyCount does the same total either way.
+		 * A long lag keeps its remainder for the next drain instead of running thousands of guest calls here. */
+		int reps = id == 0 && n > 1 ? (n > 8 ? 8 : n) : 1;
+		if (reps > 1) { pthread_mutex_lock(&o->m); o->ncount += n - reps; o->notify_arg = arg; o->notifier = id; pthread_mutex_unlock(&o->m); }
+		for (int r = 0; r < reps; r++) {
+			if (guest_call4(c, o->func, id, reps > 1 ? 1u : (uint32_t)n, arg, o->common)) { obj_delete(o); break; }   /* nonzero: the callback deletes itself */
+		}
 	}
 	in_callbacks = 0;
 	return ran;
