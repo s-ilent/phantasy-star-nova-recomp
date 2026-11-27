@@ -122,6 +122,8 @@ void recomp_hook_psn_frame_rate(Cpu *c) {
 #define PSN_HEAP_HI 0x1c31d000u
 #define PSN_REC_DEFAULT 0x14bc7f94u   /* the option record itself: the save log names it, RECOMP_PSN_SETTINGS overrides it */
 static uint32_t psn_rec;
+static uint32_t psn_copies[8];   /* the addresses the scan found holding the whole option run: what the systems read each frame */
+static int psn_ncopies;
 static uint32_t psn_rec_addr(void) {
 	if (!psn_rec) { const char *e = getenv("RECOMP_PSN_SETTINGS"); psn_rec = e && *e ? (uint32_t)strtoul(e, 0, 0) : PSN_REC_DEFAULT; }
 	return psn_rec;
@@ -160,7 +162,7 @@ static void psn_settings_trace(void) {
 				for (int k = 0; k < 6; k++) if (RD32(a + 4 * (uint32_t)k) != fv[k]) { frun = 0; break; }
 				int ip = (x == camLR && y == camUD) || (x == camUD && y == camLR);
 				int fp = (x == fLR && y == fUD) || (x == fUD && y == fLR);
-				if (run) runs++;
+				if (run) { runs++; if (psn_ncopies < 8) psn_copies[psn_ncopies++] = a; }
 				if (frun) fruns++;
 				if (ip) ipairs++;
 				if (fp) fpairs++;
@@ -213,6 +215,9 @@ static void psn_settings_read_watch(void) {
 	if (!on) return;
 	const uint32_t rec = psn_rec_addr();
 	if (rec) gwatch_read_arm(rec + 0x15c, 8);   /* both camera speeds, adjacent: re-armed each frame, since the first access opens the page */
+	/* The record's own page produced no hits at all, so the game does not read the record each frame; the scan's copies are
+	 * what it reads. Arm those too, which is what names the reader of the speed fields. */
+	for (int i = 0; i < psn_ncopies; i++) if (psn_copies[i] != rec + 0x15c) gwatch_read_arm(psn_copies[i], 8);
 }
 
 /*
