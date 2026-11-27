@@ -138,6 +138,7 @@ static void scan_item(struct Item it) {
 	}
 }
 static void *scan_worker(void *arg) {
+	waitstats_name("gxpScan");
 	(void)arg; low_priority();
 	for (;;) {
 		const int i = __atomic_fetch_add(&gi.next, 1, __ATOMIC_RELAXED);
@@ -176,6 +177,7 @@ static void save_cache(const char *path) {
 static int u32_cmp(const void *a, const void *b) { const uint32_t x = *(const uint32_t *)a, y = *(const uint32_t *)b; return (x > y) - (x < y); }
 static int have_cmp(const void *a, const void *b) { const uint32_t x = ((const struct Have *)a)->hash, y = ((const struct Have *)b)->hash; return (x > y) - (x < y); }
 static void *index_main(void *arg) {
+	waitstats_name("gxpIndex");
 	(void)arg; low_priority();
 	const double t0 = now_s();
 	walk(gi.app0, "");

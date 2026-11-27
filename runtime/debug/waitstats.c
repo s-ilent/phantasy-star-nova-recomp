@@ -36,7 +36,8 @@ static WsThread *ws_threads[WS_MAX]; static int ws_n; static pthread_mutex_t ws_
 static __thread WsThread *ws_me; static __thread char ws_name[32];
 static uint64_t ws_start;   /* the report window's start */
 static WsThread *me(void);
-void waitstats_name(const char *n) { snprintf(ws_name, sizeof ws_name, "%s", n ? n : ""); if (ws_me) snprintf(ws_me->name, sizeof ws_me->name, "%s", ws_name); else me(); }   /* (and the thread counted from its start: a fiber may never wait in the kernel) */   /* (kernel.c: a guest thread's name, as it starts: winpthreads won't read a name back) */
+int waitstats_on(void);   /* (defined below: waitstats_name needs it to know whether to materialise a row) */
+void waitstats_name(const char *n) { snprintf(ws_name, sizeof ws_name, "%s", n ? n : ""); if (ws_me) snprintf(ws_me->name, sizeof ws_me->name, "%s", ws_name); else if (waitstats_on()) me(); }   /* (and the thread counted from its start: a fiber may never wait in the kernel) */   /* (kernel.c: a guest thread's name, as it starts: winpthreads won't read a name back) */   /* (the thread-local name is always kept, so a row created later still gets it; the row itself is only made when the report is on, so naming a thread costs nothing otherwise) */
 static int ws_every = -1;
 
 int waitstats_on(void) {
@@ -68,7 +69,9 @@ static WsThread *me(void) {
 #endif
 		t->cpu_at = cpu_ns(t);
 		char n[32] = ""; if (!ws_name[0]) pthread_getname_np(pthread_self(), n, sizeof n);
-		snprintf(t->name, sizeof t->name, "%s", ws_name[0] ? ws_name : n[0] ? n : "(host)"); t->born = waitstats_now();
+		if (ws_name[0]) snprintf(t->name, sizeof t->name, "%s", ws_name);
+		else if (n[0]) snprintf(t->name, sizeof t->name, "%s", n);
+		else snprintf(t->name, sizeof t->name, "host %04x", (unsigned)((uintptr_t)pthread_self() & 0xffffu));   /* unnamed: a distinct id, so two anonymous rows can be told apart */ t->born = waitstats_now();
 		pthread_mutex_lock(&ws_m); if (ws_n < WS_MAX) ws_threads[ws_n++] = t; pthread_mutex_unlock(&ws_m);
 		ws_me = t;
 	}

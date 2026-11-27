@@ -386,6 +386,7 @@ static void sched_report(uint64_t now) {   /* RECOMP_SCHED_LOG: who holds the sl
 	fprintf(stderr, "%s\n", line);
 }
 static void *sched_monitor(void *p) {   /* a host thread (never scheduled): the timer every quantum, the report every second */
+	waitstats_name("schedMonitor");
 	(void)p;
 	uint64_t next_report = mono_us() + 1000000;
 	for (;;) {

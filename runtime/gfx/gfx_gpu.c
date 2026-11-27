@@ -704,6 +704,7 @@ static int bq_stopping, bq_running;   /* gfx_gpu_builds_stop: no job starts any 
 static int bq_bulk_active, bq_bulk_cap = 1 << 30;   /* workers on bq_head[3] jobs now, and at most (pred_throttle lowers it: not a level's own prebuilds) */
 static int bq_workers;   /* 0 not started, -1 none could start */
 static void *build_worker(void *arg) {
+	waitstats_name("gpuBuild");
 	(void)arg;
 #ifdef __APPLE__
 	pthread_set_qos_class_self_np(QOS_CLASS_UTILITY, 0);   /* below the game's threads; the Metal compiler service runs at the requester's QoS. Frame_3408 cold: as fast as the default class (8 workers 4.0 s, 6 workers 4.7 vs 4.9) */
@@ -4362,6 +4363,7 @@ static int fn_n, fn_next, fn_done, fn_threads = -1;
 static pthread_mutex_t fn_m = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t fn_work = PTHREAD_COND_INITIALIZER, fn_fin = PTHREAD_COND_INITIALIZER;
 static void *fn_worker(void *arg) {
+	waitstats_name("gpuFence");
 	(void)arg;
 	pthread_mutex_lock(&fn_m);
 	for (;;) {
@@ -6411,6 +6413,7 @@ static FenceMark fm[NFM]; static int fm_w, fm_r;   /* ring: written at fm_w, fol
 static pthread_mutex_t fm_m = PTHREAD_MUTEX_INITIALIZER;
 static int fence_stats_on(void) { static int v = -1; if (v < 0) { const char *e = getenv("RECOMP_GPU_FENCE_STATS"); v = e && *e && *e != '0'; } return v; }
 static void *fm_poll(void *arg) {
+	waitstats_name("gpuFencePoll");
 	(void)arg;
 	for (;;) {
 		usleep(100);
@@ -6539,6 +6542,7 @@ static void hist_record(uint32_t base, TargetEntry *e, uint32_t w, uint32_t h, i
 }
 typedef struct { char dir[64]; uint32_t w, h, n; uint64_t frame[HIST_MAX]; uint8_t *px; } HistWrite;
 static void *hist_write(void *arg) {   /* (a thread of its own: 180 PNGs, the size a bug report can carry) */
+	waitstats_name("gpuHist");
 	HistWrite *j = arg; const size_t one = 4u * j->w * j->h;
 	for (uint32_t k = 0; k < j->n; k++) {
 		char path[128]; snprintf(path, sizeof path, "%s/%llu.png", j->dir, (unsigned long long)j->frame[k]);
@@ -6612,6 +6616,7 @@ static FILE *vq_txt; static unsigned vq_frame, vq_dropped, vq_written;
 static void vq_put(void *ctx, void *data, int size) { fwrite(data, 1, (size_t)size, (FILE *)ctx); }
 static void vq_exit(void) { pthread_mutex_lock(&vq_m); if (vq_txt) fflush(vq_txt); fprintf(stderr, "    video: %u frames written, %u dropped (queue full), %d still queued at exit\n", vq_written, vq_dropped, vq_count); pthread_mutex_unlock(&vq_m); }
 static void *vq_worker(void *arg) {
+	waitstats_name("gpuVq");
 	(void)arg;
 	for (;;) {
 		pthread_mutex_lock(&vq_m);

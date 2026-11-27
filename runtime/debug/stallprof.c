@@ -152,6 +152,7 @@ static void report(uint64_t stall_us) {
 }
 extern void (*hook_stall_long)(uint64_t stall_us);   /* hooks.c: a game's own diagnostics for a long stall (Killzone's job trace) */
 static void *monitor_main(void *arg) {
+	waitstats_name("stallprof");
 	(void)arg;
 	pthread_setname_np("stallprof");
 	thread_t self = mach_thread_self();

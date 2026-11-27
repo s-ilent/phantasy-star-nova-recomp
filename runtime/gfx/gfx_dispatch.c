@@ -208,6 +208,7 @@ void gfx_guest_replaced(uint32_t addr, uint32_t len) { LOCKED(if (gpu_backend())
 void (*gfx_kick_done_hook)(void);   /* gpu.c's completion counter bump, after held-back writes land */
 int gfx_gpu_vis_defer(const uint32_t *addr, const uint32_t *val, int n); int gfx_gpu_vis_deferred(void); void gfx_gpu_vis_flush(int wait);
 static void *vis_poller(void *arg) {
+	waitstats_name("gpuVisPoll");
 	(void)arg;
 	for (;;) { plat_sleep_ns(250000); if (gfx_gpu_vis_deferred()) LOCKED(gfx_gpu_vis_flush(0)); }
 	return 0;
