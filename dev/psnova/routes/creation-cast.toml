@@ -1,0 +1,11 @@
+# Start a new game, open Select Race and Sex and look at the Cast characters: their textures and how long picking one takes.
+description = "new game, then the Cast race in character creation"
+fixture = "empty-2026-11-26"
+end = 13500
+shots = [9900, 10500, 11100, 11700, 12300, 12900, 13500]
+gfx = "gpu"
+clock = "real"
+
+# Start (patch credit), Start (title), Circle (NEW GAME), Circle (Select Race and Sex), Down x4 (Cast Male), then Circle
+# through race, class and the first base character into Edit Character.
+buttons = ["1300-1340:8", "1700-1740:8", "2000-2015:2000", "9600-9615:2000", "9800-9805:40", "9830-9835:40", "9860-9865:40", "9890-9895:40", "10000-10015:2000", "10300-10315:2000", "10600-10615:2000", "10900-10915:2000", "11300-11315:2000", "11400-11405:40", "11600-11615:2000", "12000-12015:2000"]

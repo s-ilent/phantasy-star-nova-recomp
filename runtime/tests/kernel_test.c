@@ -895,6 +895,32 @@ static void test_sched(void) {
 	pthread_mutex_unlock(&sched_m);
 }
 
+/* ================= reusing deleted objects' places: games create and delete objects all the time
+ * (Phantasy Star Nova: ~340 lightweight mutexes and event flags a second at 30 fps) */
+static void test_reuse(void) {
+	uint32_t name = guest_alloc(16, 4); strcpy((char *)G(name), "churn");
+	int places = nobjs;
+	uint32_t first = call(h_create_evf, 4, name, 0, 0, 0);
+	CHECKEQ(call(h_delete_evf, 1, first), 0);
+	for (int i = 0; i < 20000; i++) { uint32_t e = call(h_create_evf, 4, name, 0, 0, 0); call(h_delete_evf, 1, e); }
+	CHECK(nobjs - places <= OBJ_QUARANTINE + 2);   /* the places are reused, not 20,000 new ones */
+	CHECKEQ(call(h_set_evf, 2, first, 1), E_UNKNOWN_EVF_ID);   /* a stale uid of a reused place resolves to nothing */
+	uint32_t e = call(h_create_evf, 4, name, 0, 0, 0);
+	CHECK(e >= 0x40020001 && !(e & 0x80000000) && e != first);
+	CHECKEQ(call(h_set_evf, 2, e, 1), 0); CHECKEQ(call(h_delete_evf, 1, e), 0);
+	/* a lightweight mutex created and deleted over and over in the same work area still works */
+	uint32_t w = guest_alloc(32, 8);
+	for (int i = 0; i < 10000; i++) { memset(G(w), 0, 32); CHECKEQ(call(h_create_lwmutex, 5, w, name, 2, 0, 0), 0); CHECKEQ(call(h_delete_lwmutex, 1, w), 0); }
+	memset(G(w), 0, 32); CHECKEQ(call(h_create_lwmutex, 5, w, name, 2, 0, 0), 0);
+	CHECKEQ(call(h_lock_lwmutex, 3, w, 1, 0), 0); CHECKEQ(call(h_unlock_lwmutex, 2, w, 1), 0); CHECKEQ(call(h_delete_lwmutex, 1, w), 0);
+	/* callbacks created and deleted many times: the callback list stays bounded and lists the live one */
+	for (int i = 0; i < 1000; i++) { uint32_t cb = call(h_create_callback, 4, name, 0, 0x1018, 0); CHECKEQ(call(h_delete_callback, 1, cb), 0); }
+	uint32_t cb = call(h_create_callback, 4, name, 0, 0x1018, 0);
+	int listed = 0; for (int i = 0; i < ncallbacks; i++) listed |= callbacks[i] == by_uid(cb, CALLBACK);
+	CHECK(listed && ncallbacks <= MAX_CALLBACKS);
+	CHECKEQ(call(h_delete_callback, 1, cb), 0);
+}
+
 int main(void) {
 	recomp_mem = mmap(0, 1ull << 32, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
 	if (recomp_mem == MAP_FAILED) { perror("mmap"); return 2; }
@@ -910,6 +936,7 @@ int main(void) {
 	test_callbacks();
 	test_fibers();
 	test_misc();
+	test_reuse();
 	int before = checks, failed_before = fails;
 	test_sched();
 	fprintf(stderr, "scheduler (RECOMP_SCHED=vita): %d checks, %d failed\n", checks - before, fails - failed_before);

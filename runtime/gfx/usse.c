@@ -686,6 +686,8 @@ struct UsseProgram {
 	UsseFragLayout fl;
 	uint32_t literal_addr, literal_words;   /* container 16's data, for the uniform-buffer-address table */
 	int8_t additive;   /* usse_fragment_fb_blend's answer + 1, once asked (0: not yet) */
+	struct { int sa, unit; uint32_t off[4]; } memtex[USSE_MAX_MEMTEX]; int nmemtex;   /* find_memory_textures */
+	struct { uint8_t sa, word; uint32_t off; } cload[USSE_MAX_CLOAD]; int ncload;   /* find_constant_loads */
 	struct UsseProgram *next, *hnext;   /* the address table's chain; the content table's chain (decoded entries only) */
 };
 typedef struct {
@@ -1232,7 +1234,8 @@ static int smp_gather(Ctx *cx, const UOp *op, int unit, float u, float v) {
 }
 static void exec_smp(Ctx *cx, const UOp *op) {
 	float u = read_f32(cx, &op->s0, 0, 0), v = read_f32(cx, &op->s0, 0, 1), w3 = read_f32(cx, &op->s0, 0, 2);
-	uint32_t unit = op->s1.bank == BK_SA && cx->d && cx->d->sa_unit[op->s1.num & 255] ? cx->d->sa_unit[op->s1.num & 255] - 1u : read_i32(cx, &op->s1, 0, 0) & 0xFF;   /* a dependent sampler by its table (UsseDraw.sa_unit), else the SA word (usse_run's saN=) */
+	uint32_t unit = usse_memtex_unit(op) >= 0 ? (uint32_t)usse_memtex_unit(op)   /* texture words loaded from memory: the unit the draw bound them to */
+	              : op->s1.bank == BK_SA && cx->d && cx->d->sa_unit[op->s1.num & 255] ? cx->d->sa_unit[op->s1.num & 255] - 1u : read_i32(cx, &op->s1, 0, 0) & 0xFF;   /* a dependent sampler by its table (UsseDraw.sa_unit), else the SA word (usse_run's saN=) */
 	float lod = 0;
 	if (op->sub2 == 1 || op->sub2 == 2) lod = read_f32(cx, &op->s2, 0, 0);
 	if (smp_gather(cx, op, (int)unit, u, v)) return;
@@ -1656,6 +1659,105 @@ uint32_t usse_content_hash(uint32_t prog_addr, uint32_t *size) { return prog_con
 int usse_buffer_words(const UsseProgram *p, int c) { int base = 0, size = 0; return p && find_container(p->addr, c, &base, &size) && size > 0 ? size : 0; }   /* the words usse_setup_registers copies from uniform buffer c (0: the program reaches it only through pointers, LDST) */
 int usse_program_pa_words(const UsseProgram *p) { return p->pa_words; }
 uint32_t usse_float_to_lane(float v, int type) { return float_to_lane(v, type); }   /* the interpreter's own conversion, for gfx_soft.c's direct vertex packer */
+/* the words of temporary registers an instruction may write: a load's consecutive elements, else one word per
+ * write-mask lane (two lanes a word for the 16-bit and smaller types), for every repeat */
+static void temp_words_written(const UOp *q, int *lo, int *n) {
+	*lo = q->dst.num;
+	if (q->op == OP_LDST) { *n = q->reps; return; }
+	int lanes = q->mask & 8 ? 4 : q->mask & 4 ? 3 : q->mask & 2 ? 2 : 1;
+	int words = q->dst.type == TY_F32 || q->dst.type == TY_U32 || q->dst.type == TY_S32 ? lanes : (lanes + 1) / 2;
+	*n = words * (q->reps > 1 ? q->reps : 1);
+}
+/* A sample whose texture is described in memory: the program loads the four SceGxmTexture words into temporaries
+ * with LDSTs from a uniform-buffer pointer in SA (base + constant offsets) and the SMP takes them from there,
+ * not a sampler slot. Phantasy Star Nova's character creator builds the Cast body textures this way (two
+ * programs, with one such sample and with seven): the translator refused the programs and the software
+ * fallback sampled the unit numbered by the first word's low byte -- a flat green body and seconds of CPU work
+ * per frame. Each such SMP gets a texture unit none of the program's own code samples, from 15 down (args[1] =
+ * unit + 1, usse_memtex_unit; the same four words again, the same unit), and usse_memory_textures reads its
+ * words for a draw, which binds them there. Straight-line code only: a branch, or another write to one of the
+ * four words between the loads and the SMP, leaves the program as it was. */
+static void find_memory_textures(UsseProgram *p, uint32_t prog) {
+	p->nmemtex = 0;
+	uint32_t taken = 0;   /* the units the program's own code samples: SMPs by number, dependent samplers, texture iterators (a sampler it
+	                       * declares but never samples doesn't count: Nova's Cast body pass declares ten and reads seven textures from memory) */
+	for (int k = 0; k < p->nprim; k++) if (p->prim[k].op == OP_SMP && p->prim[k].s1.bank == BK_IMM && p->prim[k].s1.num < 16) taken |= 1u << p->prim[k].s1.num;
+	uint32_t depcnt = h_table_count(prog, H_DEPSAMP_COUNT, H_DEPSAMP_OFF, 4, H_CAP_DEPSAMP), depbase = RD32(prog + H_DEPSAMP_OFF) ? prog + H_DEPSAMP_OFF + RD32(prog + H_DEPSAMP_OFF) : 0;
+	for (uint32_t i = 0; depbase && i < depcnt; i++) { int u = RD16(depbase + 4 * i) / 4; if (u < 16) taken |= 1u << u; }
+	if (p->is_fragment) for (int i = 0; i < p->fl.niters; i++) if (p->fl.iters[i].is_tex && p->fl.iters[i].tex_unit >= 0 && p->fl.iters[i].tex_unit < 16) taken |= 1u << p->fl.iters[i].tex_unit;
+	for (int k = 0; k < p->nprim; k++) {
+		UOp *op = &p->prim[k];
+		if (op->op != OP_SMP || op->s1.bank != BK_TEMP) continue;
+		int t = op->s1.num, sa = -1, have = 0; uint32_t off[4] = {0};
+		for (int j = k - 1; j >= 0 && have >= 0 && have != 15; j--) {
+			const UOp *q = &p->prim[j];
+			if (q->op == OP_BR) { have = -1; break; }
+			if (q->op == OP_NOP || q->dst.bank != BK_TEMP) continue;
+			int lo, n; temp_words_written(q, &lo, &n);
+			if (lo + n <= t || lo >= t + 4) continue;
+			if (q->op != OP_LDST || q->sub2 || q->pred_kind || q->s0.bank != BK_SA || q->s1.bank != BK_IMM || q->s2.bank != BK_IMM || q->args[3] != 4 || (sa >= 0 && sa != q->s0.num)) { have = -1; break; }
+			sa = q->s0.num;
+			for (int i = 0; i < n; i++) {
+				int w = lo + i - t;
+				if (w < 0 || w > 3 || (have >> w & 1)) continue;
+				off[w] = (uint32_t)q->s1.num * 4u + (q->args[0] ? 0u : 4u) + q->s2.num + 4u * (uint32_t)i;   /* exec_ldst's address */
+				have |= 1 << w;
+			}
+		}
+		if (have != 15) continue;
+		int unit = -1;
+		for (int m = 0; m < p->nmemtex; m++) if (p->memtex[m].sa == sa && !memcmp(p->memtex[m].off, off, sizeof off)) unit = p->memtex[m].unit;   /* the same texture again: its unit */
+		if (unit < 0) {
+			unit = 15; while (unit >= 0 && (taken >> unit & 1)) unit--;
+			if (unit < 0 || p->nmemtex == USSE_MAX_MEMTEX) { fprintf(stderr, "    usse: program %#x: no free texture unit for the sample at %d, whose texture is in memory (%d found so far)\n", prog, k, p->nmemtex); break; }
+			taken |= 1u << unit;
+			p->memtex[p->nmemtex].sa = sa; p->memtex[p->nmemtex].unit = unit; memcpy(p->memtex[p->nmemtex].off, off, sizeof off); p->nmemtex++;
+		}
+		op->args[1] = unit + 1;
+	}
+}
+/* A fragment program's loads at constant offsets from a uniform-buffer pointer (LDST from an SA word plus immediates):
+ * the same words for every fragment of a draw. A GPU fragment program can't read guest memory (only render targets,
+ * usse_spirv.c's emit_ldst_target), so each such load gets SA words above every one the program reads (args[1] = the
+ * first, args[2] = 2: usse_const_load) and usse_setup_registers fills them from memory for each draw; the translator
+ * reads them there. Nova's Cast body pass reads its colours and the words of seven textures so:
+ * every frame it drew fell to the software path. A program that indexes SA, or whose free SA words run out, keeps the
+ * loads it has left. Only a program that also samples a texture from memory (find_memory_textures): a pointer into a
+ * render target (Killzone's quarter-res pass) is read on the GPU through emit_ldst_target, and its guest memory here
+ * would be stale. */
+static void find_constant_loads(UsseProgram *p) {
+	p->ncload = 0;
+	if (!p->is_fragment || !p->nmemtex) return;
+	int top = 0;
+	const UOp *code[2] = {p->prim, p->sec}; int n[2] = {p->nprim, p->nsec};
+	for (int c = 0; c < 2; c++) for (int k = 0; k < n[c]; k++) {
+		const UOp *q = &code[c][k]; const UOperand *o[4] = {&q->dst, &q->s0, &q->s1, &q->s2};
+		for (int i = 0; i < 4; i++) {
+			if (o[i]->bank == BK_IDX || o[i]->bank == BK_IDXD1 || o[i]->bank == BK_IDXD2) return;   /* (SA reached by index: no word is known free) */
+			if (o[i]->bank == BK_SA && o[i]->num + 4 > top) top = o[i]->num + 4;
+		}
+	}
+	for (int k = 0; k < p->nprim; k++) {
+		UOp *q = &p->prim[k];
+		if (q->op != OP_LDST || q->sub2 || q->s0.bank != BK_SA || q->s1.bank != BK_IMM || q->s2.bank != BK_IMM || q->args[3] != 4) continue;
+		if (top + q->reps > 256 || p->ncload + q->reps > USSE_MAX_CLOAD) break;
+		q->args[1] = top; q->args[2] = 2;
+		for (int i = 0; i < q->reps; i++, top++, p->ncload++) {
+			p->cload[p->ncload].sa = (uint8_t)q->s0.num; p->cload[p->ncload].word = (uint8_t)top;
+			p->cload[p->ncload].off = (uint32_t)q->s1.num * 4u + (q->args[0] ? 0u : 4u) + q->s2.num + 4u * (uint32_t)i;   /* exec_ldst's address */
+		}
+	}
+}
+int usse_memory_textures(const UsseProgram *p, uint32_t def_uniform_buf, const uint32_t ubuf[14], uint32_t words[][4], int units[]) {
+	if (!p || !p->nmemtex) return 0;
+	UsseDraw d; usse_setup_registers(p, &d, def_uniform_buf, ubuf);
+	for (int i = 0; i < p->nmemtex; i++) {
+		uint32_t b = d.sa[p->memtex[i].sa & 255].u;
+		for (int w = 0; w < 4; w++) words[i][w] = b ? RD32(b + p->memtex[i].off[w]) : 0;
+		units[i] = p->memtex[i].unit;
+	}
+	return p->nmemtex;
+}
 /* the decode itself, into p (usse_get's tables, or usse_decode_uncached's own) */
 static void decode_program(UsseProgram *p, uint32_t prog_addr, uint32_t hash, uint32_t size) {
 	p->hash = hash; p->size = size; p->supported = 1; p->malformed = 0; p->additive = 0;   /* (new bytes at a known address: decided again) */
@@ -1693,6 +1795,8 @@ static void decode_program(UsseProgram *p, uint32_t prog_addr, uint32_t hash, ui
 	}
 	p->literal_words = RD32(prog_addr + H_LITERAL_SIZE) / 4;
 	p->literal_addr = prog_addr + H_LITERAL_DATA_OFF + RD32(prog_addr + H_LITERAL_DATA_OFF);
+	find_memory_textures(p, prog_addr);
+	find_constant_loads(p);
 }
 const UsseProgram *usse_get(uint32_t prog_addr) {
 	uint32_t size, hash = prog_content_hash(prog_addr, &size);
@@ -1789,6 +1893,10 @@ void usse_setup_registers(const UsseProgram *p, UsseDraw *d, uint32_t def_unifor
 		uint32_t e = depbase + 4 * i; int rilo = RD16(e), sa_off = RD16(e + 2);
 		int unitn = rilo / 4, word = rilo % 4;
 		if (word == 0) { int at = c19base + sa_off; if (at >= 0 && at < 256 && unitn < 255) d->sa_unit[at] = (uint8_t)(unitn + 1); }   /* the unit, beside the SA words (UsseDraw.sa_unit): those stay 0 */
+	}
+	for (int i = 0; i < p->ncload; i++) {   /* the constant loads' words (find_constant_loads), through the pointers just set */
+		uint32_t b = d->sa[p->cload[i].sa].u;
+		d->sa[p->cload[i].word].u = b ? RD32(b + p->cload[i].off) : 0;
 	}
 }
 void usse_pack_attr(UsseInst *inst, const UsseAttrSlot *slot, const float comps[4], const void *raw, int rawlen) {

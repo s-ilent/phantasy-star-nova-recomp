@@ -1,0 +1,35 @@
+# Start a new game and stay in character creation for 30 minutes: watch the frame rate and memory over time.
+description = "new game, then idle in character creation for 54,000 frames"
+fixture = "empty-2026-11-26"
+end = 54000
+shots = [9000, 18000, 27000, 36000, 45000, 54000]
+gfx = "gpu"
+clock = "real"
+
+# Start (patch credit), Start (title), Circle (NEW GAME); the story intro runs by itself into the creation list.
+buttons = ["1300-1340:8", "1700-1740:8", "2000-2015:2000"]
+
+[[windows]]
+name = "0-5 min"
+from = 9500
+to = 15000
+[[windows]]
+name = "5-10 min"
+from = 15000
+to = 24000
+[[windows]]
+name = "10-15 min"
+from = 24000
+to = 33000
+[[windows]]
+name = "15-20 min"
+from = 33000
+to = 42000
+[[windows]]
+name = "20-25 min"
+from = 42000
+to = 48000
+[[windows]]
+name = "25-30 min"
+from = 48000
+to = 54000

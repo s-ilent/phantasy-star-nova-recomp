@@ -390,6 +390,15 @@ static void draw(uint32_t cx, const uint32_t *stream, uint32_t prim, uint32_t in
 		for (int i = 0; i < 14; i++) d.fubuf[i] = bound(RD32(cx + CX_FUBUF + 4 * i), 0x3e000000u);
 		for (int i = 0; i < 16; i++) if (RD32(cx + CX_FTEX + 16 * i + 8)) d.tex[i] = texture(cx + CX_FTEX + 16 * i);
 	}
+	/* a sample whose texture the fragment program reads from memory (usse.c's find_memory_textures: four
+	 * SceGxmTexture words through a uniform-buffer pointer): that texture, on the unit the program's SMP was
+	 * given -- one its code samples nothing else from (a texture the game left there goes unread). Unbound, the
+	 * Cast bodies in Phantasy Star Nova's character creator came out flat green */
+	if (is_gxp(d.fprog)) {
+		uint32_t mw[USSE_MAX_MEMTEX][4]; int mu[USSE_MAX_MEMTEX];
+		int nm = usse_memory_textures(usse_get(d.fprog), d.funiforms, d.fubuf, mw, mu);
+		for (int i = 0; i < nm; i++) d.tex[mu[i]] = (mw[i][2] & ~3u) ? texture_words(mw[i][0], mw[i][1], mw[i][2], mw[i][3]) : (GfxTexture){0};
+	}
 	/* the vertex program's textures, when it samples any (GXP +0x1c/+0x20: 4 usage bits a unit): the
 	 * context's (sceGxmSetVertexTexture), or a precomputed vertex state's SA words -- the vertex stage
 	 * has no PDS texture block, every vertex texture reaches the program as SA words */

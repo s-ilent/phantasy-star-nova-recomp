@@ -739,35 +739,96 @@ typedef struct {
 	struct { uint32_t tid; int n; } *readers; int nreaders, readers_cap;   /* a reader-writer lock's readers and their counts (owner/count: the writer) */
 	uint8_t *ring; int cap, used, rpos;   /* a message pipe's bytes: a ring of the created size */
 	uint32_t func, common, notify_arg, notifier; int ncount;   /* a callback: its function and common argument; the notifications not yet delivered */
+	uint32_t slot; int gen;         /* its place in the table and how many times the place was reused (both in the uid) */
 } Obj;
 static __thread pthread_cond_t *my_cv;
 static pthread_cond_t *wait_cv(void) { if (!my_cv) { my_cv = malloc(sizeof *my_cv); pthread_cond_init(my_cv, 0); } return my_cv; }
-/* objects: pages of pointers (an object's address never moves, readers need no lock; a deleted
- * object stays allocated, so a stale uid or pointer is an error rather than a crash), and the
- * lightweight ones also indexed by their guest work area */
+/* objects: pages of pointers (an object's address never moves, readers need no lock), and the
+ * lightweight ones also indexed by their guest work area.
+ * A deleted object's place is reused, but not at once: it waits in a queue behind OBJ_QUARANTINE
+ * other deleted ones, and is taken only when no thread waits on it any more. So a thread that
+ * looked an object up just before it was deleted never lands on its successor. The place keeps
+ * its host mutex. Games create and delete objects all the time (Phantasy Star Nova: ~340
+ * lightweight mutexes and event flags a second at 30 fps); before, every one stayed allocated
+ * with its mutex (a Windows Event handle each), the table overflowed its 1,048,576 places after
+ * ~26 minutes at 60 fps (writing past its end), and the callback scan walked them all.
+ * The uid holds the place and its generation: 0x40020001 + 2 * (gen * OBJ_SLOTS + slot), so
+ * generation 0 gives the uids of before and a stale uid from an earlier generation of a reused
+ * place resolves to nothing (an unknown-id error, as for a deleted object). OBJ_GENS keeps every
+ * uid below 0x80000000 (a uid is a positive int). */
 #define OBJ_PAGE 1024
+#define OBJ_SLOTS (OBJ_PAGE * 1024)
+#define OBJ_GENS 511
+#define OBJ_QUARANTINE 4096
 static Obj **obj_pages[1024];
-static int nobjs;
+static int nobjs;   /* places ever used */
 static Obj *obj_at(uint32_t i) { Obj **p = i / OBJ_PAGE < 1024 ? obj_pages[i / OBJ_PAGE] : 0; return p ? p[i % OBJ_PAGE] : 0; }
+static uint32_t *freed;   /* deleted places, oldest first: a ring of OBJ_SLOTS (klock) */
+static uint32_t freed_r, freed_w;
 typedef struct WorkNode { Obj *o; struct WorkNode *next; } WorkNode;
 static WorkNode *by_work_hash[1 << 16];
+/* the oldest deleted place no thread waits on any more, prepared for reuse (klock held); 0 if none is due */
+static Obj *reuse_place(uint32_t keep) {
+	for (uint32_t tries = freed_w - freed_r; tries && freed_w - freed_r > keep; tries--) {
+		Obj *o = obj_at(freed[freed_r++ % OBJ_SLOTS]);
+		if (!pthread_mutex_trylock(&o->m)) {
+			if (!o->head && !o->nwait) {
+				pthread_mutex_t m = o->m; uint32_t slot = o->slot; int gen = o->gen;
+				free(o->readers); free(o->ring);
+				memset(o, 0, sizeof *o);
+				o->m = m; o->slot = slot; o->gen = (gen + 1) % OBJ_GENS;
+				pthread_mutex_unlock(&o->m);
+				return o;
+			}
+			pthread_mutex_unlock(&o->m);
+		}
+		freed[freed_w++ % OBJ_SLOTS] = o->slot;   /* still waited on (or busy): back of the queue */
+	}
+	return 0;
+}
+/* the callback objects, for run_callbacks: a few per game, against the hundreds of thousands of
+ * objects a long session creates and deletes. An entry stays after its callback is deleted (the
+ * checks below skip it); its place is reused when the list is full, and a reused callback place
+ * already listed isn't listed twice. Readers take ncallbacks once and read the entries without a lock. */
+#define MAX_CALLBACKS 256
+static Obj *callbacks[MAX_CALLBACKS];
+static int ncallbacks;
+static void callback_listed(Obj *o) {
+	pthread_mutex_lock(&klock);
+	int at = -1;
+	for (int i = 0; i < ncallbacks; i++) {
+		if (callbacks[i] == o) { pthread_mutex_unlock(&klock); return; }
+		if (at < 0 && (callbacks[i]->kind != CALLBACK || callbacks[i]->deleted)) at = i;
+	}
+	if (ncallbacks < MAX_CALLBACKS) { callbacks[ncallbacks] = o; __atomic_store_n(&ncallbacks, ncallbacks + 1, __ATOMIC_RELEASE); }
+	else if (at >= 0) callbacks[at] = o;
+	else fprintf(stderr, "kernel: more than %d callbacks at once: callback %#x is not run\n", MAX_CALLBACKS, o->uid);
+	pthread_mutex_unlock(&klock);
+}
 static Obj *new_obj(int kind, uint32_t name, uint32_t attr) {
-	Obj *o = calloc(1, sizeof *o);
-	pthread_mutex_init(&o->m, 0);
+	pthread_mutex_lock(&klock);
+	Obj *o = reuse_place(OBJ_QUARANTINE);
+	if (!o && nobjs == OBJ_SLOTS) o = reuse_place(0);   /* the table is full: any deleted place will do */
+	if (!o) {
+		if (nobjs == OBJ_SLOTS) { fprintf(stderr, "kernel: all %d object places are in use (none deleted); stopping\n", OBJ_SLOTS); abort(); }
+		o = calloc(1, sizeof *o);
+		pthread_mutex_init(&o->m, 0);
+		o->slot = (uint32_t)nobjs;
+		if (!obj_pages[nobjs / OBJ_PAGE]) obj_pages[nobjs / OBJ_PAGE] = calloc(OBJ_PAGE, sizeof(Obj *));
+		obj_pages[nobjs / OBJ_PAGE][nobjs % OBJ_PAGE] = o;
+		nobjs++;
+	}
 	o->kind = kind; o->attr = attr;
 	snprintf(o->name, sizeof o->name, "%s", name ? (char *)G(name) : "");
-	pthread_mutex_lock(&klock);
-	o->uid = 0x40020001 + 2 * nobjs;
-	if (!obj_pages[nobjs / OBJ_PAGE]) obj_pages[nobjs / OBJ_PAGE] = calloc(OBJ_PAGE, sizeof(Obj *));
-	obj_pages[nobjs / OBJ_PAGE][nobjs % OBJ_PAGE] = o;
-	nobjs++;
+	o->uid = 0x40020001 + 2 * ((uint32_t)o->gen * OBJ_SLOTS + o->slot);
 	pthread_mutex_unlock(&klock);
+	if (kind == CALLBACK) callback_listed(o);
 	return o;
 }
 static Obj *by_uid(uint32_t uid, int kind) {
-	uint32_t i = (uid - 0x40020001) / 2;
-	Obj *o = (uid & 1) && i < (uint32_t)nobjs ? obj_at(i) : 0;
-	return o && o->kind == kind && !o->deleted ? o : 0;
+	uint32_t i = (uid - 0x40020001) / 2, slot = i % OBJ_SLOTS;
+	Obj *o = (uid & 1) && slot < (uint32_t)nobjs ? obj_at(slot) : 0;
+	return o && o->uid == uid && o->kind == kind && !o->deleted ? o : 0;
 }
 static Obj *by_work(uint32_t work, int kind) {
 	pthread_mutex_lock(&klock);
@@ -860,10 +921,16 @@ static uint32_t wait_on(Obj *o, Waiter *w, uint32_t timeout_p, uint32_t edelete,
 /* delete: every waiter returns WAIT_DELETE; the uid and work area stop resolving */
 static void obj_delete(Obj *o) {
 	pthread_mutex_lock(&o->m);
+	int was = o->deleted;
 	o->deleted = 1;
 	for (Waiter *w = o->head; w; w = w->next) pthread_cond_signal(w->cv);
 	pthread_mutex_unlock(&o->m);
+	if (was) return;   /* (deleted twice: a callback that deleted itself and also returned nonzero) */
 	if (o->work) unlink_work(o);
+	pthread_mutex_lock(&klock);   /* its place, to be reused once OBJ_QUARANTINE later deletions have queued behind it */
+	if (!freed) freed = malloc(OBJ_SLOTS * sizeof *freed);
+	if (freed_w - freed_r < OBJ_SLOTS) freed[freed_w++ % OBJ_SLOTS] = o->slot;
+	pthread_mutex_unlock(&klock);
 }
 static void h_delete_uid(Cpu *c, int kind, uint32_t eunknown) { Obj *o = by_uid(A0, kind); if (!o) { RET(eunknown); return; } obj_delete(o); RET(0); }
 static void h_delete_work(Cpu *c, int kind, uint32_t eunknown) { Obj *o = by_work(A0, kind); if (!o) { RET(eunknown); return; } obj_delete(o); RET(0); }
@@ -1282,8 +1349,8 @@ static uint32_t run_callbacks(Cpu *c) {
 	display_vblank_callbacks();
 	__atomic_store_n(&t->cb_pending, 0, __ATOMIC_RELEASE);
 	uint32_t ran = 0;
-	for (int i = 0; i < nobjs; i++) {
-		Obj *o = obj_at((uint32_t)i);
+	for (int i = 0, n = __atomic_load_n(&ncallbacks, __ATOMIC_ACQUIRE); i < n; i++) {   /* the callbacks only: this runs on every CB wait */
+		Obj *o = callbacks[i];
 		if (!o || o->kind != CALLBACK || o->deleted || o->owner != t->uid) continue;
 		pthread_mutex_lock(&o->m);
 		int n = o->ncount; uint32_t arg = o->notify_arg, id = o->notifier;

@@ -99,6 +99,11 @@ uint32_t usse_gxp_hash(const void *gxp, uint32_t *size);   /* the same of a GXP'
 int usse_gxp_sane(const void *gxp, uint32_t size);   /* its code's counts and offsets inside its size: a program decode_program can walk (gxp_index.c's scan also finds GXP headers in other data -- Killzone: 387 of 12860, counts in the millions) */
 UsseProgram *usse_decode_uncached(uint32_t prog_addr);   /* a decode outside usse_get's tables (a program in scratch memory, about to be replaced) */
 void usse_program_free(UsseProgram *p);
+/* a sample whose texture is described in memory (usse.c's find_memory_textures): the four SceGxmTexture words
+ * each such sample reads for this draw, and the texture unit it samples (one the program's own samplers don't
+ * use, from 15 down) -- the caller binds a texture made from the words there. Returns how many (0: none). */
+#define USSE_MAX_MEMTEX 16
+int usse_memory_textures(const UsseProgram *p, uint32_t def_uniform_buf, const uint32_t ubuf[14], uint32_t words[][4], int units[]);
 int usse_primary_reads_memory(const UsseProgram *p);   /* its primary program has an LDST: what it computes depends on memory its registers don't hold */
 int usse_buffer_words(const UsseProgram *p, int c);   /* the words of uniform buffer c it copies into SA (0: reached only through LDST pointers) */
 int usse_program_pa_words(const UsseProgram *p);    /* vertex: PA words per vertex record (a multiple of 4, at most 160) */

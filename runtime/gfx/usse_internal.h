@@ -45,6 +45,13 @@ typedef struct {
 	int32_t args[4];                   /* SMLSI/SMBO tables (packed inc/mode), BR target */
 	uint64_t raw;
 } UOp;
+/* an SMP whose texture words the program loads from memory (usse.c's find_memory_textures): the unit the draw
+ * binds that texture to, else -1 */
+static inline int usse_memtex_unit(const UOp *op) { return op->op == OP_SMP && op->args[1] > 0 ? op->args[1] - 1 : -1; }
+/* a fragment LDST at a constant offset from a uniform-buffer pointer (usse.c's find_constant_loads): the first of the SA
+ * words usse_setup_registers fills with what it loads (one a repeat), else -1 */
+#define USSE_MAX_CLOAD 192
+static inline int usse_const_load(const UOp *op) { return op->op == OP_LDST && op->args[2] == 2 ? op->args[1] : -1; }
 
 /* FPCONSTANT ROM (§2.7): 64 entries, (low word, high word); a translator can emit these as plain
  * SPIR-V constants (the ROM is fixed, not draw state) instead of modelling the bank at all. */

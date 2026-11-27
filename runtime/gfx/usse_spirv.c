@@ -1076,6 +1076,7 @@ static void emit_i32mad2(Gen *g, const UOp *op, int *ok) {
 static uint32_t sa_read[8];   /* the sa_tex_unit entries this translation read (usse_spirv_sa_read) */
 static int resolve_smp_unit(const UOp *op, const uint32_t sa_tex_unit[256]) {
 	int unit;
+	if (usse_memtex_unit(op) >= 0) return usse_memtex_unit(op);   /* texture words loaded from memory: the unit the draw binds them to */
 	if (op->s1.bank == BK_IMM) unit = op->s1.num;
 	else if (op->s1.bank == BK_SA) { const int i = op->s1.num % 256; sa_read[i >> 5] |= 1u << (i & 31); unit = (int)(sa_tex_unit[i] & 0xFF); }
 	else return -1;
@@ -1084,7 +1085,7 @@ static int resolve_smp_unit(const UOp *op, const uint32_t sa_tex_unit[256]) {
 void usse_spirv_key(const UsseProgram *prog, const UsseFragLayout *fl, const uint32_t sa_tex_unit[256], int *color_kind, uint32_t *cube_mask, uint32_t *snap_mask) {
 	uint32_t used = 0; int n = 0; const UOp *code = usse_program_code(prog, 0, &n);
 	for (int i = 0; i < n; i++) if (code[i].op == OP_SMP) {   /* (resolve_smp_unit's, without noting the read) */
-		int unit = code[i].s1.bank == BK_IMM ? code[i].s1.num : code[i].s1.bank == BK_SA ? (int)(sa_tex_unit[code[i].s1.num % 256] & 0xFF) : -1;
+		int unit = usse_memtex_unit(&code[i]) >= 0 ? usse_memtex_unit(&code[i]) : code[i].s1.bank == BK_IMM ? code[i].s1.num : code[i].s1.bank == BK_SA ? (int)(sa_tex_unit[code[i].s1.num % 256] & 0xFF) : -1;
 		if (unit >= 0 && unit < 16) used |= 1u << unit;
 	}
 	if (fl) for (int i = 0; i < fl->niters; i++) if (fl->iters[i].is_tex && fl->iters[i].tex_unit >= 0 && fl->iters[i].tex_unit < 16) used |= 1u << fl->iters[i].tex_unit;
@@ -1095,7 +1096,7 @@ void usse_spirv_key(const UsseProgram *prog, const UsseFragLayout *fl, const uin
 uint32_t usse_spirv_predict_cube(const UsseProgram *prog, const UsseFragLayout *fl, const uint32_t sa_tex_unit[256]) {
 	uint32_t m = 0; int n = 0; const UOp *code = usse_program_code(prog, 0, &n);
 	for (int i = 0; i < n; i++) if (code[i].op == OP_SMP && code[i].sub == 2) {   /* (dec_smp: sub is the coordinate's dimension, 2 = 3D) */
-		int unit = code[i].s1.bank == BK_IMM ? code[i].s1.num : code[i].s1.bank == BK_SA ? (int)(sa_tex_unit[code[i].s1.num % 256] & 0xFF) : -1;
+		int unit = usse_memtex_unit(&code[i]) >= 0 ? usse_memtex_unit(&code[i]) : code[i].s1.bank == BK_IMM ? code[i].s1.num : code[i].s1.bank == BK_SA ? (int)(sa_tex_unit[code[i].s1.num % 256] & 0xFF) : -1;
 		if (unit >= 0 && unit < 16) m |= 1u << unit;
 	}
 	if (fl) for (int i = 0; i < fl->niters; i++) if (fl->iters[i].is_tex && fl->iters[i].tex_proj == 3 && fl->iters[i].tex_unit >= 0 && fl->iters[i].tex_unit < 16) m |= 1u << fl->iters[i].tex_unit;
@@ -1176,7 +1177,8 @@ static uint32_t sample_lod(Gen *g, int slot, int unit, uint32_t coord, int lod_m
 static void emit_smp(Gen *g, const UOp *op, const uint32_t sa_tex_unit[256], int *ok) {
 	Spv *s = &g->s;
 	int unit = resolve_smp_unit(op, sa_tex_unit), slot = unit < 0 ? -1 : sampler_slot(g, unit);
-	if (slot < 0) { if (!g->why[0]) snprintf(g->why, sizeof g->why, "SMP: texture unit %d has no sampler slot", unit); *ok = 0; return; }   /* samplers are pre-declared from a prescan before the walk starts */
+	if (slot < 0) { if (!g->why[0]) snprintf(g->why, sizeof g->why, "SMP: texture unit %d has no sampler slot (s1 bank %d num %d, sa word 0x%x)", unit, op->s1.bank, op->s1.num,
+	                                         op->s1.bank == BK_SA ? sa_tex_unit[op->s1.num % 256] : 0); *ok = 0; return; }   /* samplers are pre-declared from a prescan before the walk starts */
 	uint32_t u = read_comp_f(g, &op->s0, 0, 0, ok), v = read_comp_f(g, &op->s0, 0, 1, ok);
 	if (!*ok) return;
 	uint32_t coord, grad[2] = {0, 0};
@@ -1366,6 +1368,19 @@ static uint32_t snap_fetch(Gen *g, int slot, int unit, uint32_t u, uint32_t v) {
 	uint32_t coord = result2(s, &s->func, SpvOpCompositeConstruct, t_vec(s, ti, 2), T[0], T[1]);
 	uint32_t texel = nid(s); INS(&s->func, SpvOpImageFetch, t_vec(s, tf, 4), texel, img, coord, 2 /*Lod*/, c_int(s, 0));
 	return texel;
+}
+/* a constant load (usse.c's find_constant_loads): its words, which usse_setup_registers put in SA from args[1] on */
+static void emit_const_load(Gen *g, const UOp *op, int *ok) {
+	UOperand o; memset(&o, 0, sizeof o); o.bank = BK_SA; o.type = TY_U32; for (int c = 0; c < 4; c++) o.swiz[c] = (uint8_t)c;
+	for (int k = 0; k < op->reps; k++) {
+		o.num = (uint16_t)(usse_const_load(op) + k);
+		uint32_t word = read_raw_comp(g, &o, 0, 0, ok);
+		if (!*ok) return;
+		if (op->dst.bank == BK_IDXD1 || op->dst.bank == BK_IDXD2) continue;   /* (as emit_ldst) */
+		RegPtr p = bank_ptr(g, op->dst.bank, op->dst.num + k);
+		if (!p.ok) { *ok = 0; return; }
+		store(&g->s, p.ptr, word);
+	}
 }
 static void emit_ldst(Gen *g, const UOp *op, const UOp *code, int i, int *ok) {
 	Spv *s = &g->s;
@@ -2098,7 +2113,7 @@ SpirvModule usse_spirv_translate(const UsseProgram *prog, const UsseVertexLayout
 			int unit = resolve_smp_unit(&code[i], sa_tex_unit);
 			if (unit >= 0 && sampler_slot(&g, unit) < 0 && g.nsmp < 16) g.smp_units[g.nsmp++] = unit;
 		}
-		if (code[i].op == OP_LDST && !code[i].sub2) {   /* a load: which SA word its address comes from (a fragment program's: a render target, emit_ldst_target) */
+		if (code[i].op == OP_LDST && !code[i].sub2 && usse_const_load(&code[i]) < 0) {   /* a load: which SA word its address comes from (a fragment program's: a render target, emit_ldst_target); not a constant load (its words are in SA) */
 			int sa = ldst_pointer_sa(code, i), k;
 			if (sa >= 0) { for (k = 0; k < g.nwin && g.win_sa[k] != sa; k++); if (k == g.nwin && g.nwin < 8) g.win_sa[g.nwin++] = sa; }
 		}
@@ -2489,7 +2504,8 @@ SpirvModule usse_spirv_translate(const UsseProgram *prog, const UsseVertexLayout
 			case OP_KILL: if (!g.is_fragment) ok = 0; else emit_kill(&g, op, &ok); break;
 			case OP_DEPTHF: emit_depthf(&g, op, &ok); break;
 			case OP_LIMM: emit_limm(&g, op, &ok); break;
-			case OP_LDST: if (g.is_fragment) emit_ldst_target(&g, op, code, i, &ok); else emit_ldst(&g, op, code, i, &ok); break;
+			case OP_LDST: if (usse_const_load(op) >= 0) { emit_const_load(&g, op, &ok); break; }   /* (usse.c's find_constant_loads: the words are in SA) */
+				if (g.is_fragment) emit_ldst_target(&g, op, code, i, &ok); else emit_ldst(&g, op, code, i, &ok); break;
 			default: ok = 0; break;
 			}
 			if (pred_merge) { INS(&s->func, SpvOpBranch, pred_merge); INS(&s->func, SpvOpLabel, pred_merge); }
